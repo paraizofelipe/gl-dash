@@ -6,8 +6,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	gitm "github.com/aymanbagabas/git-module"
-	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
+	"github.com/dlvhdr/gh-dash/v4/internal/git"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 	"github.com/dlvhdr/gh-dash/v4/internal/utils"
 )
@@ -31,7 +31,7 @@ type Task struct {
 }
 
 type ProgramContext struct {
-	GHRepo               *repository.Repository
+	GHRepo               *git.RemoteRepo
 	GitRepo              *gitm.Repository
 	RepoPath             string
 	RepoUrl              string
@@ -57,7 +57,7 @@ type ProgramContext struct {
 }
 
 func (ctx *ProgramContext) HasGHRepo() bool {
-	return ctx.GHRepo != nil && *ctx.GHRepo != (repository.Repository{})
+	return ctx.GHRepo != nil && *ctx.GHRepo != (git.RemoteRepo{})
 }
 
 func (ctx *ProgramContext) GetViewSectionsConfig() []config.SectionConfig {

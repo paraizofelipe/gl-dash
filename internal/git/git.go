@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -195,8 +196,39 @@ func GetRepoInPwd() (*gitm.Repository, error) {
 	return gitm.Open(".")
 }
 
+type RemoteRepo struct {
+	Host  string
+	Owner string
+	Name  string
+}
+
+var (
+	sshRemoteRe   = regexp.MustCompile(`^(?:ssh://)?git@([^:/]+)[:/](.+?)(?:\.git)?/?$`)
+	httpsRemoteRe = regexp.MustCompile(`^https?://(?:[^@/]+@)?([^/]+)/(.+?)(?:\.git)?/?$`)
+)
+
+func ParseRemoteURL(url string) (RemoteRepo, bool) {
+	var host, path string
+	switch {
+	case sshRemoteRe.MatchString(url):
+		m := sshRemoteRe.FindStringSubmatch(url)
+		host, path = m[1], m[2]
+	case httpsRemoteRe.MatchString(url):
+		m := httpsRemoteRe.FindStringSubmatch(url)
+		host, path = m[1], m[2]
+	default:
+		return RemoteRepo{}, false
+	}
+	idx := strings.LastIndex(path, "/")
+	if idx < 0 {
+		return RemoteRepo{}, false
+	}
+	return RemoteRepo{Host: host, Owner: path[:idx], Name: path[idx+1:]}, true
+}
+
 func GetRepoShortName(url string) string {
-	r, _ := strings.CutPrefix(url, "https://github.com/")
-	r, _ = strings.CutSuffix(r, ".git")
-	return r
+	if r, ok := ParseRemoteURL(url); ok {
+		return r.Owner + "/" + r.Name
+	}
+	return url
 }

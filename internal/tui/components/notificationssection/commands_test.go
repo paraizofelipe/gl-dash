@@ -1,6 +1,7 @@
 package notificationssection
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/notificationrow"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
@@ -251,5 +253,111 @@ func TestUpdateNotificationKeepsCursorOnNewLastItem(t *testing.T) {
 
 	if got := current.GetId(); got != "notif-B" {
 		t.Fatalf("GetCurrNotification().GetId() = %q, want %q", got, "notif-B")
+	}
+}
+
+func newModelWithCurrentPRNotification(id, url string) Model {
+	return Model{
+		Notifications: []notificationrow.Data{
+			{
+				Notification: data.NotificationData{
+					Id: id,
+					Subject: data.NotificationSubject{
+						Title: "Test PR",
+						Url:   url,
+						Type:  "PullRequest",
+					},
+					Repository: data.NotificationRepository{
+						FullName: "owner/repo",
+					},
+				},
+			},
+		},
+	}
+}
+
+func openURLSubCmd(t *testing.T, cmd tea.Cmd) tea.Cmd {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("openInBrowser() returned a nil cmd")
+	}
+
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected tea.BatchMsg from openInBrowser(), got %T", msg)
+	}
+	if len(batch) != 2 {
+		t.Fatalf(
+			"expected openInBrowser() batch to contain exactly 2 commands (mark-as-read, open-in-browser), got %d",
+			len(batch),
+		)
+	}
+	return batch[1]
+}
+
+func TestOpenInBrowser_InvokesOpenURLFuncWithCurrentNotificationURL(t *testing.T) {
+	originalOpenURLFunc := openURLFunc
+	defer func() { openURLFunc = originalOpenURLFunc }()
+
+	var callCount int
+	var gotURL string
+	openURLFunc = func(url string) error {
+		callCount++
+		gotURL = url
+		return nil
+	}
+
+	m := newModelWithCurrentPRNotification(
+		"notif-open-1",
+		"https://api.github.com/repos/owner/repo/pulls/123",
+	)
+
+	browserCmd := openURLSubCmd(t, m.openInBrowser())
+	msg := browserCmd()
+
+	if callCount != 1 {
+		t.Fatalf("openURLFunc call count = %d, want 1", callCount)
+	}
+
+	wantURL := "https://github.com/owner/repo/pull/123"
+	if gotURL != wantURL {
+		t.Fatalf("openURLFunc called with URL = %q, want %q", gotURL, wantURL)
+	}
+
+	if msg != nil {
+		t.Fatalf("open-in-browser command message = %v, want nil on success", msg)
+	}
+}
+
+func TestOpenInBrowser_PropagatesOpenURLFuncError(t *testing.T) {
+	originalOpenURLFunc := openURLFunc
+	defer func() { openURLFunc = originalOpenURLFunc }()
+
+	wantErr := errors.New("xdg-open: command not found")
+	var callCount int
+	openURLFunc = func(url string) error {
+		callCount++
+		return wantErr
+	}
+
+	m := newModelWithCurrentPRNotification(
+		"notif-open-2",
+		"https://api.github.com/repos/owner/repo/pulls/456",
+	)
+
+	browserCmd := openURLSubCmd(t, m.openInBrowser())
+	msg := browserCmd()
+
+	if callCount != 1 {
+		t.Fatalf("openURLFunc call count = %d, want 1", callCount)
+	}
+
+	errMsg, ok := msg.(constants.ErrMsg)
+	if !ok {
+		t.Fatalf("expected constants.ErrMsg, got %T (%v)", msg, msg)
+	}
+	if !errors.Is(errMsg.Err, wantErr) {
+		t.Fatalf("ErrMsg.Err = %v, want %v", errMsg.Err, wantErr)
 	}
 }

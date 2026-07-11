@@ -18,13 +18,13 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
 	"github.com/charmbracelet/fang"
-	"github.com/cli/go-gh/v2/pkg/repository"
 	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/spf13/cobra"
 
 	gitm "github.com/aymanbagabas/git-module"
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/git"
+	"github.com/dlvhdr/gh-dash/v4/internal/gitlab"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	dctx "github.com/dlvhdr/gh-dash/v4/internal/tui/context"
@@ -223,7 +223,7 @@ func init() {
 			log.Warn("did not find git repo at current path")
 		}
 
-		if ghRepo != (repository.Repository{}) {
+		if ghRepo != (git.RemoteRepo{}) {
 			log.Info(
 				"found github repo at current path",
 				"host",
@@ -235,6 +235,18 @@ func init() {
 			)
 		} else {
 			log.Warn("did not find github repo at current path")
+		}
+
+		if !config.IsFeatureEnabled(config.FF_MOCK_DATA) {
+			// Skip the auth check when no token is configured: otherwise the boot
+			// would fire an unsolicited request to the GitLab host (and log a
+			// misleading warning) even for users still operating against GitHub
+			// during the migration.
+			if auth, _ := gitlab.LoadAuthConfig(); auth.Token != "" {
+				if err := verifyGitLabAuth(); err != nil {
+					log.Warn("GitLab authentication check failed", "err", err)
+				}
+			}
 		}
 
 		zone.NewGlobal()
@@ -265,12 +277,21 @@ func init() {
 	}
 }
 
-func getCurrentGitAndGitHubRepos() (*gitm.Repository, repository.Repository, error) {
+func verifyGitLabAuth() error {
+	c, err := gitlab.RESTClient()
+	if err != nil {
+		return err
+	}
+	_, _, err = c.Users.CurrentUser()
+	return err
+}
+
+func getCurrentGitAndGitHubRepos() (*gitm.Repository, git.RemoteRepo, error) {
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var gitRepo *gitm.Repository
-	var ghRepo repository.Repository
+	var ghRepo git.RemoteRepo
 	var gitErr, ghErr error
 	var wg sync.WaitGroup
 
@@ -282,9 +303,16 @@ func getCurrentGitAndGitHubRepos() (*gitm.Repository, repository.Repository, err
 	})
 
 	wg.Go(func() {
-		ghRepo, ghErr = repository.Current()
-		if ghErr != nil {
-			cancel() // Abort the context, so the other function can abort early
+		originUrl, err := git.GetOriginUrl(".")
+		if err != nil {
+			ghErr = err
+			cancel()
+			return
+		}
+		var ok bool
+		if ghRepo, ok = git.ParseRemoteURL(originUrl); !ok {
+			ghErr = fmt.Errorf("origin remote is not a recognized git host URL: %s", originUrl)
+			cancel()
 		}
 	})
 

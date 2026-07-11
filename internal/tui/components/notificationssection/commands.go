@@ -10,13 +10,20 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/cli/go-gh/v2/pkg/browser"
+	"github.com/cli/browser"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 )
+
+func init() {
+	browser.Stdout = io.Discard
+	browser.Stderr = io.Discard
+}
+
+var openURLFunc = browser.OpenURL
 
 // markNotificationDoneFunc is the function used to mark a notification as done
 // via the GitHub API. It is a variable so tests can override it.
@@ -253,11 +260,7 @@ func (m *Model) openInBrowser() tea.Cmd {
 			}
 		},
 		func() tea.Msg {
-			// Discard the launcher's stdout/stderr so any noise (e.g. GTK /
-			// GVFS warnings from xdg-open / gnome-open) does not leak into
-			// the TUI's terminal and corrupt the display. See #829, #584, #679.
-			b := browser.New("", io.Discard, io.Discard)
-			err := b.Browse(notificationUrl)
+			err := openURLFunc(notificationUrl)
 			if err != nil {
 				return constants.ErrMsg{Err: err}
 			}

@@ -1,0 +1,6 @@
+hosts:
+  gitlab.com:
+    token: fixture-token-123
+    api_host: gitlab.com
+    api_protocol: https
+    user: fixture-user

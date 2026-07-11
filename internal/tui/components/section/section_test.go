@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
+	"github.com/dlvhdr/gh-dash/v4/internal/git"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prompt"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/search"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/table"
@@ -19,14 +19,14 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
 
-func currentRepoFilter(t *testing.T, repo repository.Repository) string {
+func currentRepoFilter(t *testing.T, repo git.RemoteRepo) string {
 	t.Helper()
 	t.Setenv("GH_REPO", fmt.Sprintf("https://github.com/%s/%s", repo.Owner, repo.Name))
 	return fmt.Sprintf("repo:%s/%s", repo.Owner, repo.Name)
 }
 
 func TestHasRepoNameInConfiguredFilter(t *testing.T) {
-	repo := repository.Repository{Owner: "dlvhdr", Name: "gh-dash"}
+	repo := git.RemoteRepo{Owner: "dlvhdr", Name: "gh-dash"}
 	repoFilter := currentRepoFilter(t, repo)
 
 	tests := []struct {
@@ -70,7 +70,7 @@ func TestHasRepoNameInConfiguredFilter(t *testing.T) {
 }
 
 func TestHasCurrentRepoNameInConfiguredFilter(t *testing.T) {
-	repo := repository.Repository{Owner: "dlvhdr", Name: "gh-dash"}
+	repo := git.RemoteRepo{Owner: "dlvhdr", Name: "gh-dash"}
 	repoFilter := currentRepoFilter(t, repo)
 
 	tests := []struct {
@@ -127,7 +127,7 @@ func TestHasCurrentRepoNameInConfiguredFilter(t *testing.T) {
 }
 
 func TestSyncSmartFilterWithSearchValue(t *testing.T) {
-	repo := repository.Repository{Owner: "dlvhdr", Name: "gh-dash"}
+	repo := git.RemoteRepo{Owner: "dlvhdr", Name: "gh-dash"}
 	repoFilter := currentRepoFilter(t, repo)
 
 	tests := []struct {
@@ -173,7 +173,7 @@ func TestSyncSmartFilterWithSearchValue(t *testing.T) {
 }
 
 func TestGetSearchValue(t *testing.T) {
-	repo := repository.Repository{Owner: "dlvhdr", Name: "gh-dash"}
+	repo := git.RemoteRepo{Owner: "dlvhdr", Name: "gh-dash"}
 	repoFilter := currentRepoFilter(t, repo)
 
 	tests := []struct {
@@ -266,7 +266,7 @@ func TestGetSearchValue(t *testing.T) {
 }
 
 func TestGetSearchValue_SimilarRepoNameNotStripped(t *testing.T) {
-	repo := repository.Repository{Owner: "dlvhdr", Name: "gh-dash"}
+	repo := git.RemoteRepo{Owner: "dlvhdr", Name: "gh-dash"}
 	repoFilter := currentRepoFilter(t, repo)
 	similarRepo := repoFilter + "-extra"
 
@@ -285,7 +285,7 @@ func TestGetSearchValue_SimilarRepoNameNotStripped(t *testing.T) {
 }
 
 func TestGetSearchValue_ManualRepoFilterRemoval(t *testing.T) {
-	repo := repository.Repository{Owner: "dlvhdr", Name: "gh-dash"}
+	repo := git.RemoteRepo{Owner: "dlvhdr", Name: "gh-dash"}
 	repoFilter := currentRepoFilter(t, repo)
 
 	tests := []struct {
@@ -362,7 +362,7 @@ func TestGetSearchValue_ManualRepoFilterRemoval(t *testing.T) {
 }
 
 func TestGetConfigFiltersWithCurrentRemoteAdded(t *testing.T) {
-	repo := repository.Repository{Owner: "dlvhdr", Name: "gh-dash"}
+	repo := git.RemoteRepo{Owner: "dlvhdr", Name: "gh-dash"}
 	repoFilter := currentRepoFilter(t, repo)
 
 	tests := []struct {
