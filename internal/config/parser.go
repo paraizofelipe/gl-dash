@@ -377,7 +377,7 @@ func (parser ConfigParser) getDefaultConfig() Config {
 					},
 					Labels: ColumnConfig{
 						Width:  utils.IntPtr(22),
-						Hidden: utils.BoolPtr(true),
+						Hidden: utils.BoolPtr(false),
 					},
 					Assignees: ColumnConfig{
 						Width:  utils.IntPtr(20),

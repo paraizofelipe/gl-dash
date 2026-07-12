@@ -52,6 +52,9 @@ type IssueReactions struct {
 }
 
 type Label struct {
+	// Color is the label color as a hex string. GitLab returns it with a
+	// leading "#" (e.g. "#d73a4a"); rendering normalizes the prefix so values
+	// with or without "#" both work.
 	Color       string
 	Name        string
 	Description string

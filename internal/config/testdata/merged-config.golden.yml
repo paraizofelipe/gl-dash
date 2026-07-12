@@ -61,7 +61,7 @@ defaults:
         hidden: true
       labels:
         width: 22
-        hidden: true
+        hidden: false
       lines:
         width: 15
     issues:

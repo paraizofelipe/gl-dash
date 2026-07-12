@@ -1,16 +1,21 @@
 package prssection
 
 import (
+	"os"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prompt"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/table"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
+	"github.com/dlvhdr/gh-dash/v4/internal/utils"
 )
 
 // newTestModel creates a minimal Model with the prompt confirmation box
@@ -129,4 +134,59 @@ func TestConfirmation_AllActions(t *testing.T) {
 				"explicit y should confirm for action %q", action)
 		})
 	}
+}
+
+func newProgramContextWithParsedDefaultConfig(t *testing.T) *context.ProgramContext {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "config")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("GH_DASH_CONFIG", "")
+
+	cfg, err := config.ParseConfig(config.Location{})
+	require.NoError(t, err)
+
+	return &context.ProgramContext{Config: &cfg}
+}
+
+func findColumnByTitle(t *testing.T, columns []table.Column, title string) table.Column {
+	t.Helper()
+
+	for _, c := range columns {
+		if c.Title == title {
+			return c
+		}
+	}
+
+	t.Fatalf("column with title %q not found", title)
+	return table.Column{}
+}
+
+func TestGetSectionColumns_LabelsColumnVisibleByDefault(t *testing.T) {
+	ctx := newProgramContextWithParsedDefaultConfig(t)
+
+	columns := GetSectionColumns(config.PrsSectionConfig{}, ctx)
+
+	labelsColumn := findColumnByTitle(t, columns, constants.LabelsIcon)
+	require.NotNil(t, labelsColumn.Hidden)
+	require.False(t, *labelsColumn.Hidden)
+}
+
+func TestGetSectionColumns_LabelsColumnHiddenWhenSectionOverridesHidden(t *testing.T) {
+	ctx := newProgramContextWithParsedDefaultConfig(t)
+
+	sectionCfg := config.PrsSectionConfig{
+		Layout: config.PrsLayoutConfig{
+			Labels: config.ColumnConfig{Hidden: utils.BoolPtr(true)},
+		},
+	}
+
+	columns := GetSectionColumns(sectionCfg, ctx)
+
+	labelsColumn := findColumnByTitle(t, columns, constants.LabelsIcon)
+	require.NotNil(t, labelsColumn.Hidden)
+	require.True(t, *labelsColumn.Hidden)
 }

@@ -200,6 +200,12 @@ func TestParser(t *testing.T) {
 	})
 }
 
+func TestGetDefaultConfig_LabelsColumnVisibleByDefault(t *testing.T) {
+	cfg := ConfigParser{}.getDefaultConfig()
+	require.NotNil(t, cfg.Defaults.Layout.Prs.Labels.Hidden)
+	require.False(t, *cfg.Defaults.Layout.Prs.Labels.Hidden)
+}
+
 func loadExpected(t *testing.T, fpath string) Config {
 	t.Helper()
 	cwd := Testwd(t)

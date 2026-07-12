@@ -385,6 +385,49 @@ func TestFetchPullRequests(t *testing.T) {
 			assert.Equal(t, "Still works without not-author support", resp.Prs[0].Title)
 		},
 	)
+
+	t.Run("maps multiple labels with names and colors", func(t *testing.T) {
+		defer SetClient(nil)
+
+		responseBody := `{"data":{"project":{"mergeRequests":{"nodes":[{
+			"iid":"3","title":"Multi label","state":"opened","draft":false,
+			"author":{"username":"jdoe"},
+			"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+			"webUrl":"https://gitlab.com/group/proj/-/merge_requests/3",
+			"sourceBranch":"feature-z","targetBranch":"main",
+			"detailedMergeStatus":"MERGEABLE","approved":true,
+			"diffStatsSummary":{"additions":5,"deletions":1},
+			"labels":{"nodes":[
+				{"title":"bug","color":"#ff0000","description":"Bug label"},
+				{"title":"enhancement","color":"#00ff00","description":"Enhancement label"},
+				{"title":"documentation","color":"#0000ff","description":""}
+			]}
+		}],"count":1,"pageInfo":{"hasNextPage":false,"startCursor":"","endCursor":""}}}}}`
+
+		mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+		SetClient(mockClient)
+
+		resp, err := FetchPullRequests("project:group/proj", 30, nil)
+		require.NoError(t, err)
+		require.Len(t, resp.Prs, 1)
+
+		require.Len(t, resp.Prs[0].Labels.Nodes, 3)
+		assert.Equal(
+			t,
+			Label{Name: "bug", Color: "#ff0000", Description: "Bug label"},
+			resp.Prs[0].Labels.Nodes[0],
+		)
+		assert.Equal(
+			t,
+			Label{Name: "enhancement", Color: "#00ff00", Description: "Enhancement label"},
+			resp.Prs[0].Labels.Nodes[1],
+		)
+		assert.Equal(
+			t,
+			Label{Name: "documentation", Color: "#0000ff", Description: ""},
+			resp.Prs[0].Labels.Nodes[2],
+		)
+	})
 }
 
 func TestFetchPullRequests_MergeableAndMergeStateStatusMapping(t *testing.T) {

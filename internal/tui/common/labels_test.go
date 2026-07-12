@@ -212,3 +212,30 @@ func TestRenderLabelsRendersEmojiShortcodes(t *testing.T) {
 	require.Contains(t, ansi.Strip(got), "🚀")
 	require.NotContains(t, ansi.Strip(got), ":chicken:")
 }
+
+func TestRenderLabelsNormalizesHashPrefix(t *testing.T) {
+	opts := common.LabelOpts{
+		Width:     20,
+		PillStyle: defaultStyle,
+	}
+
+	githubStyleOutput := common.RenderLabels(
+		[]data.Label{{Name: "x", Color: "d73a4a"}},
+		opts,
+	)
+	gitlabStyleOutput := common.RenderLabels(
+		[]data.Label{{Name: "x", Color: "#d73a4a"}},
+		opts,
+	)
+
+	require.Equal(t, githubStyleOutput, gitlabStyleOutput)
+}
+
+func TestRenderLabelsEmptyColorDoesNotPanic(t *testing.T) {
+	require.NotPanics(t, func() {
+		common.RenderLabels(
+			[]data.Label{{Name: "x", Color: ""}},
+			common.LabelOpts{Width: 20, PillStyle: defaultStyle},
+		)
+	})
+}

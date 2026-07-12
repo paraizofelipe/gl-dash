@@ -14,7 +14,7 @@ import (
 )
 
 func renderLabelPill(label data.Label, pillStyle lipgloss.Style, suffix string) string {
-	base := lipgloss.Color("#" + label.Color)
+	base := lipgloss.Color("#" + strings.TrimPrefix(label.Color, "#"))
 	c := lipgloss.Darken(base, 0.3)
 
 	return pillStyle.
