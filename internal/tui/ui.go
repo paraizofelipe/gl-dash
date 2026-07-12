@@ -25,6 +25,7 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/branch"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/branchsidebar"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/diffviewport"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/footer"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/issuessection"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/issueview"
@@ -53,6 +54,7 @@ type Model struct {
 	issueSidebar     issueview.Model
 	branchSidebar    branchsidebar.Model
 	notificationView notificationview.Model
+	diffViewport     diffviewport.Model
 	currSectionId    int
 	footer           footer.Model
 	repo             section.Section
@@ -107,6 +109,7 @@ func NewModel(location config.Location, repos Repositories) Model {
 	m.issueSidebar = issueview.NewModel(m.ctx)
 	m.branchSidebar = branchsidebar.NewModel(m.ctx)
 	m.notificationView = notificationview.NewModel(m.ctx)
+	m.diffViewport = diffviewport.NewModel(*m.ctx, constants.Dimensions{})
 	m.tabs = tabs.NewModel(m.ctx)
 
 	return m
@@ -544,15 +547,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 						case prview.PRActionDiff:
 							if pr := m.notificationView.GetSubjectPR(); pr != nil {
-								cmd = common.DiffPR(pr.GetNumber(), pr.GetRepoNameWithOwner(),
-									m.ctx.Config.GetFullScreenDiffPagerEnv())
+								cmd = common.DiffPR(pr.GetNumber(), pr.GetRepoNameWithOwner())
 							}
 							return m, cmd
 
 						case prview.PRActionCheckout:
 							if pr := m.notificationView.GetSubjectPR(); pr != nil {
 								cmd, _ = notificationssection.CheckoutPR(
-									m.ctx, pr.GetNumber(), pr.GetRepoNameWithOwner())
+									m.ctx, pr.GetNumber(), pr.GetRepoNameWithOwner(),
+								)
 							}
 							return m, cmd
 
@@ -862,6 +865,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case constants.ErrMsg:
 		m.ctx.Error = msg.Err
+
+	case common.DiffFetchedMsg:
+		if !m.isDiffStillRelevant(msg.PrNumber) {
+			break
+		}
+		if msg.Err != nil {
+			m.ctx.Error = msg.Err
+			break
+		}
+		m.diffViewport.SetDimensions(constants.Dimensions{
+			Width:  m.sidebar.GetSidebarContentWidth(),
+			Height: m.ctx.MainContentHeight,
+		})
+		m.diffViewport.SetDiff(msg.Diffs)
+		m.sidebar.IsOpen = true
+		m.sidebar.SetContent(m.diffViewport.View())
+		m.sidebar.ScrollToTop()
 	}
 
 	m.syncProgramContext()
@@ -955,7 +975,8 @@ func (m Model) View() tea.View {
 		s.WriteString(
 			m.ctx.Styles.Common.ErrorStyle.
 				Width(m.ctx.ScreenWidth).
-				Render(fmt.Sprintf("%s %s",
+				Render(fmt.Sprintf(
+					"%s %s",
 					m.ctx.Styles.Common.FailureGlyph,
 					lipgloss.NewStyle().
 						Foreground(m.ctx.Theme.ErrorText).
@@ -1079,6 +1100,7 @@ func (m *Model) syncProgramContext() {
 	m.issueSidebar.UpdateProgramContext(m.ctx)
 	m.branchSidebar.UpdateProgramContext(m.ctx)
 	m.notificationView.UpdateProgramContext(m.ctx)
+	m.diffViewport.UpdateProgramContext(m.ctx)
 }
 
 func (m *Model) updateSection(id int, sType string, msg tea.Msg) (cmd tea.Cmd) {

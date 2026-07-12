@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -240,4 +241,65 @@ func GetRepoShortName(url string) string {
 		return r.Owner + "/" + r.Name
 	}
 	return url
+}
+
+func CheckoutMergeRequest(repoPath string, iid int) error {
+	repo, err := gitm.Open(repoPath)
+	if err != nil {
+		return err
+	}
+	branch := fmt.Sprintf("mr-%d", iid)
+	if err := repo.Fetch(gitm.FetchOptions{
+		CommandOptions: gitm.CommandOptions{
+			Args: []string{"origin", fmt.Sprintf("merge-requests/%d/head", iid)},
+		},
+	}); err != nil {
+		return err
+	}
+	return landFetchedBranch(repo, repoPath, branch)
+}
+
+func CheckoutBranch(repoPath, branchName string) error {
+	repo, err := gitm.Open(repoPath)
+	if err != nil {
+		return err
+	}
+
+	if fetchErr := repo.Fetch(gitm.FetchOptions{
+		CommandOptions: gitm.CommandOptions{Args: []string{"origin", branchName}},
+	}); fetchErr != nil {
+		branches, err := repo.Branches()
+		if err != nil {
+			return err
+		}
+		if slices.Contains(branches, branchName) {
+			return gitm.Checkout(repoPath, branchName)
+		}
+		return gitm.Checkout(repoPath, branchName, gitm.CheckoutOptions{BaseBranch: "HEAD"})
+	}
+
+	return landFetchedBranch(repo, repoPath, branchName)
+}
+
+func landFetchedBranch(repo *gitm.Repository, repoPath, localBranch string) error {
+	currentBranch, _ := repo.SymbolicRef()
+	currentBranch = strings.TrimPrefix(currentBranch, gitm.RefsHeads)
+	if currentBranch == localBranch {
+		_, err := gitm.NewCommand("merge", "--ff-only", "FETCH_HEAD").RunInDir(repoPath)
+		return err
+	}
+
+	branches, err := repo.Branches()
+	if err != nil {
+		return err
+	}
+	if slices.Contains(branches, localBranch) {
+		if err := gitm.Checkout(repoPath, localBranch); err != nil {
+			return err
+		}
+		_, err := gitm.NewCommand("merge", "--ff-only", "FETCH_HEAD").RunInDir(repoPath)
+		return err
+	}
+
+	return gitm.Checkout(repoPath, localBranch, gitm.CheckoutOptions{BaseBranch: "FETCH_HEAD"})
 }

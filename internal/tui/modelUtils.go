@@ -33,6 +33,18 @@ func (m *Model) getCurrSection() section.Section {
 	return sections[m.currSectionId]
 }
 
+func (m *Model) isDiffStillRelevant(prNumber int) bool {
+	if pr := m.notificationView.GetSubjectPR(); pr != nil {
+		return pr.GetNumber() == prNumber
+	}
+	if currSection := m.getCurrSection(); currSection != nil {
+		if row := currSection.GetCurrRow(); row != nil {
+			return row.GetNumber() == prNumber
+		}
+	}
+	return true
+}
+
 func (m *Model) getCurrRowData() data.RowData {
 	section := m.getCurrSection()
 	if section == nil {
@@ -243,7 +255,8 @@ func (m *Model) runCustomPRCommand(commandTemplate string, prData *prrow.Data) t
 }
 
 func (m *Model) runCustomIssueCommand(commandTemplate string, issueData *data.IssueData) tea.Cmd {
-	return m.runCustomCommand(commandTemplate,
+	return m.runCustomCommand(
+		commandTemplate,
 		&map[string]any{
 			"RepoName":    issueData.GetRepoNameWithOwner(),
 			"IssueNumber": issueData.Number,
@@ -332,7 +345,8 @@ func (m *Model) executeCustomCommand(cmd string) tea.Cmd {
 				return constants.ErrMsg{Err: mdErr}
 			}
 			return constants.ErrMsg{Err: errors.New(
-				lipgloss.JoinVertical(lipgloss.Left,
+				lipgloss.JoinVertical(
+					lipgloss.Left,
 					fmt.Sprintf("Whoops, got an error: %s", err),
 					md,
 				),
@@ -350,7 +364,8 @@ func (m *Model) notify(text string) tea.Cmd {
 			StartText:    text,
 			FinishedText: text,
 			State:        context.TaskStart,
-		})
+		},
+	)
 
 	finishCmd := func() tea.Msg {
 		return constants.TaskFinishedMsg{
@@ -369,7 +384,8 @@ func (m *Model) notifyErr(text string) tea.Cmd {
 			StartText:    text,
 			FinishedText: text,
 			State:        context.TaskStart,
-		})
+		},
+	)
 
 	finishCmd := func() tea.Msg {
 		return constants.TaskFinishedMsg{

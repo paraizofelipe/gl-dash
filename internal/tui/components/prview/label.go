@@ -2,7 +2,6 @@ package prview
 
 import (
 	"fmt"
-	"os/exec"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -25,13 +24,6 @@ func (m *Model) label(labels []string) tea.Cmd {
 		Error:        nil,
 	}
 
-	commandArgs := []string{
-		"pr",
-		"edit",
-		fmt.Sprint(prNumber),
-		"-R",
-		pr.GetRepoNameWithOwner(),
-	}
 	labelsMap := make(map[string]bool)
 	for _, label := range labels {
 		labelsMap[label] = true
@@ -42,23 +34,16 @@ func (m *Model) label(labels []string) tea.Cmd {
 		existingLabelsColorMap[label.Name] = label.Color
 	}
 
+	var toRemove []string
 	for _, label := range m.pr.Data.Primary.Labels.Nodes {
 		if _, ok := labelsMap[label.Name]; !ok {
-			commandArgs = append(commandArgs, "--remove-label")
-			commandArgs = append(commandArgs, label.Name)
+			toRemove = append(toRemove, label.Name)
 		}
-	}
-
-	for _, label := range labels {
-		commandArgs = append(commandArgs, "--add-label")
-		commandArgs = append(commandArgs, label)
 	}
 
 	startCmd := m.ctx.StartTask(task)
 	return tea.Batch(startCmd, func() tea.Msg {
-		c := exec.Command("gh", commandArgs...)
-
-		err := c.Run()
+		err := data.UpdateMergeRequestLabels(pr.GetRepoNameWithOwner(), prNumber, labels, toRemove)
 
 		returnedLabels := data.PRLabels{Nodes: []data.Label{}}
 		for _, label := range labels {

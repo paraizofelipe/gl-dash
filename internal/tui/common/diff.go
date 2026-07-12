@@ -1,31 +1,21 @@
 package common
 
 import (
-	"fmt"
-	"os/exec"
-
 	tea "charm.land/bubbletea/v2"
+	gitlabapi "gitlab.com/gitlab-org/api/client-go"
 
-	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
+	"github.com/dlvhdr/gh-dash/v4/internal/data"
 )
 
-// DiffPR opens a diff view for a PR using the gh CLI.
-// The env parameter should be the result of Config.GetFullScreenDiffPagerEnv().
-func DiffPR(prNumber int, repoName string, env []string) tea.Cmd {
-	c := exec.Command(
-		"gh",
-		"pr",
-		"diff",
-		fmt.Sprint(prNumber),
-		"-R",
-		repoName,
-	)
-	c.Env = env
+type DiffFetchedMsg struct {
+	PrNumber int
+	Diffs    []*gitlabapi.MergeRequestDiff
+	Err      error
+}
 
-	return tea.ExecProcess(c, func(err error) tea.Msg {
-		if err != nil {
-			return constants.ErrMsg{Err: err}
-		}
-		return nil
-	})
+func DiffPR(prNumber int, repoName string) tea.Cmd {
+	return func() tea.Msg {
+		diffs, err := data.FetchMergeRequestDiffs(repoName, prNumber)
+		return DiffFetchedMsg{PrNumber: prNumber, Diffs: diffs, Err: err}
+	}
 }

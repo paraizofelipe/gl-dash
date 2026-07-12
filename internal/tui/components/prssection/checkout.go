@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/git"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
@@ -40,19 +40,12 @@ func (m *Model) checkout() (tea.Cmd, error) {
 	}
 	startCmd := m.Ctx.StartTask(task)
 	return tea.Batch(startCmd, func() tea.Msg {
-		c := exec.Command(
-			"gh",
-			"pr",
-			"checkout",
-			fmt.Sprint(m.GetCurrRow().GetNumber()),
-		)
 		userHomeDir, _ := os.UserHomeDir()
 		if strings.HasPrefix(repoPath, "~") {
 			repoPath = strings.Replace(repoPath, "~", userHomeDir, 1)
 		}
 
-		c.Dir = repoPath
-		err := c.Run()
+		err := git.CheckoutMergeRequest(repoPath, prNumber)
 		return constants.TaskFinishedMsg{TaskId: taskId, Err: err}
 	}), nil
 }

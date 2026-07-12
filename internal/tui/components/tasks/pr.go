@@ -3,18 +3,28 @@ package tasks
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/log/v2"
+	"github.com/cli/browser"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/git"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/utils"
 )
+
+func init() {
+	browser.Stdout = io.Discard
+	browser.Stderr = io.Discard
+}
+
+var openURL = browser.OpenURL
 
 type SectionIdentifier struct {
 	Id   int
@@ -76,130 +86,104 @@ func fireTask(ctx *context.ProgramContext, task GitHubTask) tea.Cmd {
 	})
 }
 
-func OpenBranchPR(ctx *context.ProgramContext, section SectionIdentifier, branch string) tea.Cmd {
-	return fireTask(ctx, GitHubTask{
-		Id: fmt.Sprintf("branch_open_%s", branch),
-		Args: []string{
-			"pr",
-			"view",
-			"--web",
-			branch,
-			"-R",
-			ctx.RepoUrl,
-		},
-		Section:      section,
-		StartText:    fmt.Sprintf("Opening PR for branch %s", branch),
-		FinishedText: fmt.Sprintf("PR for branch %s has been opened", branch),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			return UpdatePRMsg{}
-		},
-	})
-}
-
-func ReopenPR(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData) tea.Cmd {
-	prNumber := pr.GetNumber()
-	return fireTask(ctx, GitHubTask{
-		Id: buildTaskId("pr_reopen", prNumber),
-		Args: []string{
-			"pr",
-			"reopen",
-			fmt.Sprint(prNumber),
-			"-R",
-			pr.GetRepoNameWithOwner(),
-		},
-		Section:      section,
-		StartText:    fmt.Sprintf("Reopening PR #%d", prNumber),
-		FinishedText: fmt.Sprintf("PR #%d has been reopened", prNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			return UpdatePRMsg{
-				PrNumber: prNumber,
-				IsClosed: utils.BoolPtr(false),
-			}
-		},
-	})
-}
-
-func ClosePR(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData) tea.Cmd {
-	prNumber := pr.GetNumber()
-	return fireTask(ctx, GitHubTask{
-		Id: buildTaskId("pr_close", prNumber),
-		Args: []string{
-			"pr",
-			"close",
-			fmt.Sprint(prNumber),
-			"-R",
-			pr.GetRepoNameWithOwner(),
-		},
-		Section:      section,
-		StartText:    fmt.Sprintf("Closing PR #%d", prNumber),
-		FinishedText: fmt.Sprintf("PR #%d has been closed", prNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			return UpdatePRMsg{
-				PrNumber: prNumber,
-				IsClosed: utils.BoolPtr(true),
-			}
-		},
-	})
-}
-
-func PRReady(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData) tea.Cmd {
-	prNumber := pr.GetNumber()
-	return fireTask(ctx, GitHubTask{
-		Id: buildTaskId("pr_ready", prNumber),
-		Args: []string{
-			"pr",
-			"ready",
-			fmt.Sprint(prNumber),
-			"-R",
-			pr.GetRepoNameWithOwner(),
-		},
-		Section:      section,
-		StartText:    fmt.Sprintf("Marking PR #%d as ready for review", prNumber),
-		FinishedText: fmt.Sprintf("PR #%d has been marked as ready for review", prNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			return UpdatePRMsg{
-				PrNumber:       prNumber,
-				ReadyForReview: utils.BoolPtr(true),
-			}
-		},
-	})
-}
-
-func MergePR(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData) tea.Cmd {
-	prNumber := pr.GetNumber()
-	c := exec.Command(
-		"gh",
-		"pr",
-		"merge",
-		fmt.Sprint(prNumber),
-		"-R",
-		pr.GetRepoNameWithOwner(),
-	)
-
-	taskId := fmt.Sprintf("merge_%d", prNumber)
+func runMRAction(
+	ctx *context.ProgramContext,
+	section SectionIdentifier,
+	taskId, startText, finishedText string,
+	do func() (tea.Msg, error),
+) tea.Cmd {
 	task := context.Task{
 		Id:           taskId,
-		StartText:    fmt.Sprintf("Merging PR #%d", prNumber),
-		FinishedText: fmt.Sprintf("PR #%d has been merged", prNumber),
+		StartText:    startText,
+		FinishedText: finishedText,
 		State:        context.TaskStart,
 		Error:        nil,
 	}
 	startCmd := ctx.StartTask(task)
-
-	return tea.Batch(startCmd, tea.ExecProcess(c, func(err error) tea.Msg {
-		isMerged := err == nil && c.ProcessState.ExitCode() == 0
-
+	return tea.Batch(startCmd, func() tea.Msg {
+		msg, err := do()
 		return constants.TaskFinishedMsg{
+			TaskId:      taskId,
 			SectionId:   section.Id,
 			SectionType: section.Type,
-			TaskId:      taskId,
 			Err:         err,
-			Msg: UpdatePRMsg{
-				PrNumber: prNumber,
-				IsMerged: &isMerged,
-			},
+			Msg:         msg,
 		}
-	}))
+	})
+}
+
+func OpenBranchPR(ctx *context.ProgramContext, section SectionIdentifier, branch string) tea.Cmd {
+	return runMRAction(
+		ctx, section,
+		fmt.Sprintf("branch_open_%s", branch),
+		fmt.Sprintf("Opening PR for branch %s", branch),
+		fmt.Sprintf("PR for branch %s has been opened", branch),
+		func() (tea.Msg, error) {
+			projectPath := git.GetRepoShortName(ctx.RepoUrl)
+			webURL, err := data.FindMergeRequestWebURLByBranch(projectPath, branch)
+			if err != nil {
+				return UpdatePRMsg{}, err
+			}
+			return UpdatePRMsg{}, openURL(webURL)
+		},
+	)
+}
+
+func ReopenPR(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData) tea.Cmd {
+	prNumber := pr.GetNumber()
+	return runMRAction(
+		ctx, section,
+		buildTaskId("pr_reopen", prNumber),
+		fmt.Sprintf("Reopening PR #%d", prNumber),
+		fmt.Sprintf("PR #%d has been reopened", prNumber),
+		func() (tea.Msg, error) {
+			err := data.ReopenMergeRequest(pr.GetRepoNameWithOwner(), prNumber)
+			return UpdatePRMsg{PrNumber: prNumber, IsClosed: utils.BoolPtr(false)}, err
+		},
+	)
+}
+
+func ClosePR(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData) tea.Cmd {
+	prNumber := pr.GetNumber()
+	return runMRAction(
+		ctx, section,
+		buildTaskId("pr_close", prNumber),
+		fmt.Sprintf("Closing PR #%d", prNumber),
+		fmt.Sprintf("PR #%d has been closed", prNumber),
+		func() (tea.Msg, error) {
+			err := data.CloseMergeRequest(pr.GetRepoNameWithOwner(), prNumber)
+			return UpdatePRMsg{PrNumber: prNumber, IsClosed: utils.BoolPtr(true)}, err
+		},
+	)
+}
+
+func PRReady(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData) tea.Cmd {
+	prNumber := pr.GetNumber()
+	return runMRAction(
+		ctx, section,
+		buildTaskId("pr_ready", prNumber),
+		fmt.Sprintf("Marking PR #%d as ready for review", prNumber),
+		fmt.Sprintf("PR #%d has been marked as ready for review", prNumber),
+		func() (tea.Msg, error) {
+			err := data.MarkMergeRequestReady(pr.GetRepoNameWithOwner(), prNumber)
+			return UpdatePRMsg{PrNumber: prNumber, ReadyForReview: utils.BoolPtr(true)}, err
+		},
+	)
+}
+
+func MergePR(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData) tea.Cmd {
+	prNumber := pr.GetNumber()
+	return runMRAction(
+		ctx, section,
+		fmt.Sprintf("merge_%d", prNumber),
+		fmt.Sprintf("Merging PR #%d", prNumber),
+		fmt.Sprintf("PR #%d has been merged", prNumber),
+		func() (tea.Msg, error) {
+			err := data.AcceptMergeRequest(pr.GetRepoNameWithOwner(), prNumber)
+			isMerged := err == nil
+			return UpdatePRMsg{PrNumber: prNumber, IsMerged: &isMerged}, err
+		},
+	)
 }
 
 func CreatePR(
@@ -208,16 +192,6 @@ func CreatePR(
 	branchName string,
 	title string,
 ) tea.Cmd {
-	c := exec.Command(
-		"gh",
-		"pr",
-		"create",
-		"--title",
-		title,
-		"-R",
-		ctx.RepoUrl,
-	)
-
 	taskId := fmt.Sprintf("create_pr_%s", title)
 	task := context.Task{
 		Id:           taskId,
@@ -228,9 +202,17 @@ func CreatePR(
 	}
 	startCmd := ctx.StartTask(task)
 
-	return tea.Batch(startCmd, tea.ExecProcess(c, func(err error) tea.Msg {
-		isCreated := err == nil && c.ProcessState.ExitCode() == 0
-
+	return tea.Batch(startCmd, func() tea.Msg {
+		projectPath := git.GetRepoShortName(ctx.RepoUrl)
+		var isCreated bool
+		targetBranch, err := data.ProjectDefaultBranch(projectPath)
+		if err != nil {
+			log.Error("failed to resolve default branch", "project", projectPath, "err", err)
+		} else if createErr := data.CreateMergeRequest(projectPath, branchName, targetBranch, title); createErr != nil {
+			log.Error("failed to create merge request", "branch", branchName, "err", createErr)
+		} else {
+			isCreated = true
+		}
 		return constants.TaskFinishedMsg{
 			SectionId:   section.Id,
 			SectionType: section.Type,
@@ -238,33 +220,29 @@ func CreatePR(
 			Err:         nil,
 			Msg:         UpdateBranchMsg{Name: branchName, IsCreated: &isCreated},
 		}
-	}))
-}
-
-func updatePRTask(section SectionIdentifier, pr data.RowData) GitHubTask {
-	prNumber := pr.GetNumber()
-	return GitHubTask{
-		Id: buildTaskId("pr_update", prNumber),
-		Args: []string{
-			"pr",
-			"update-branch",
-			fmt.Sprint(prNumber),
-			"-R",
-			pr.GetRepoNameWithOwner(),
-		},
-		Section:      section,
-		StartText:    fmt.Sprintf("Updating PR #%d", prNumber),
-		FinishedText: fmt.Sprintf("PR #%d has been updated", prNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			return UpdatePRMsg{
-				PrNumber: prNumber,
-			}
-		},
-	}
+	})
 }
 
 func UpdatePR(ctx *context.ProgramContext, section SectionIdentifier, pr data.RowData) tea.Cmd {
-	return fireTask(ctx, updatePRTask(section, pr))
+	prNumber := pr.GetNumber()
+	return runMRAction(
+		ctx, section,
+		buildTaskId("pr_update", prNumber),
+		fmt.Sprintf("Updating PR #%d", prNumber),
+		fmt.Sprintf("PR #%d has been updated", prNumber),
+		func() (tea.Msg, error) {
+			err := data.RebaseMergeRequest(pr.GetRepoNameWithOwner(), prNumber)
+			return UpdatePRMsg{PrNumber: prNumber}, err
+		},
+	)
+}
+
+func toAssignees(usernames []string) data.Assignees {
+	nodes := make([]data.Assignee, 0, len(usernames))
+	for _, assignee := range usernames {
+		nodes = append(nodes, data.Assignee{Login: assignee})
+	}
+	return data.Assignees{Nodes: nodes}
 }
 
 func AssignPR(
@@ -274,36 +252,17 @@ func AssignPR(
 	usernames []string,
 ) tea.Cmd {
 	prNumber := pr.GetNumber()
-	args := []string{
-		"pr",
-		"edit",
-		fmt.Sprint(prNumber),
-		"-R",
-		pr.GetRepoNameWithOwner(),
-	}
-	for _, assignee := range usernames {
-		args = append(args, "--add-assignee", assignee)
-	}
-	return fireTask(ctx, GitHubTask{
-		Id:           buildTaskId("pr_assign", prNumber),
-		Args:         args,
-		Section:      section,
-		StartText:    fmt.Sprintf("Assigning pr #%d to %s", prNumber, usernames),
-		FinishedText: fmt.Sprintf("pr #%d has been assigned to %s", prNumber, usernames),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			returnedAssignees := data.Assignees{Nodes: []data.Assignee{}}
-			for _, assignee := range usernames {
-				returnedAssignees.Nodes = append(
-					returnedAssignees.Nodes,
-					data.Assignee{Login: assignee},
-				)
-			}
-			return UpdatePRMsg{
-				PrNumber:       prNumber,
-				AddedAssignees: &returnedAssignees,
-			}
+	return runMRAction(
+		ctx, section,
+		buildTaskId("pr_assign", prNumber),
+		fmt.Sprintf("Assigning pr #%d to %s", prNumber, usernames),
+		fmt.Sprintf("pr #%d has been assigned to %s", prNumber, usernames),
+		func() (tea.Msg, error) {
+			err := data.AddMergeRequestAssignees(pr.GetRepoNameWithOwner(), prNumber, usernames)
+			returnedAssignees := toAssignees(usernames)
+			return UpdatePRMsg{PrNumber: prNumber, AddedAssignees: &returnedAssignees}, err
 		},
-	})
+	)
 }
 
 func UnassignPR(
@@ -313,36 +272,17 @@ func UnassignPR(
 	usernames []string,
 ) tea.Cmd {
 	prNumber := pr.GetNumber()
-	args := []string{
-		"pr",
-		"edit",
-		fmt.Sprint(prNumber),
-		"-R",
-		pr.GetRepoNameWithOwner(),
-	}
-	for _, assignee := range usernames {
-		args = append(args, "--remove-assignee", assignee)
-	}
-	return fireTask(ctx, GitHubTask{
-		Id:           buildTaskId("pr_unassign", prNumber),
-		Args:         args,
-		Section:      section,
-		StartText:    fmt.Sprintf("Unassigning %s from pr #%d", usernames, prNumber),
-		FinishedText: fmt.Sprintf("%s unassigned from pr #%d", usernames, prNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			returnedAssignees := data.Assignees{Nodes: []data.Assignee{}}
-			for _, assignee := range usernames {
-				returnedAssignees.Nodes = append(
-					returnedAssignees.Nodes,
-					data.Assignee{Login: assignee},
-				)
-			}
-			return UpdatePRMsg{
-				PrNumber:         prNumber,
-				RemovedAssignees: &returnedAssignees,
-			}
+	return runMRAction(
+		ctx, section,
+		buildTaskId("pr_unassign", prNumber),
+		fmt.Sprintf("Unassigning %s from pr #%d", usernames, prNumber),
+		fmt.Sprintf("%s unassigned from pr #%d", usernames, prNumber),
+		func() (tea.Msg, error) {
+			err := data.RemoveMergeRequestAssignees(pr.GetRepoNameWithOwner(), prNumber, usernames)
+			returnedAssignees := toAssignees(usernames)
+			return UpdatePRMsg{PrNumber: prNumber, RemovedAssignees: &returnedAssignees}, err
 		},
-	})
+	)
 }
 
 func CommentOnPR(
@@ -352,21 +292,13 @@ func CommentOnPR(
 	body string,
 ) tea.Cmd {
 	prNumber := pr.GetNumber()
-	return fireTask(ctx, GitHubTask{
-		Id: buildTaskId("pr_comment", prNumber),
-		Args: []string{
-			"pr",
-			"comment",
-			fmt.Sprint(prNumber),
-			"-R",
-			pr.GetRepoNameWithOwner(),
-			"-b",
-			body,
-		},
-		Section:      section,
-		StartText:    fmt.Sprintf("Commenting on PR #%d", prNumber),
-		FinishedText: fmt.Sprintf("Commented on PR #%d", prNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
+	return runMRAction(
+		ctx, section,
+		buildTaskId("pr_comment", prNumber),
+		fmt.Sprintf("Commenting on PR #%d", prNumber),
+		fmt.Sprintf("Commented on PR #%d", prNumber),
+		func() (tea.Msg, error) {
+			err := data.CommentOnMergeRequest(pr.GetRepoNameWithOwner(), prNumber, body)
 			return UpdatePRMsg{
 				PrNumber: prNumber,
 				NewComment: &data.Comment{
@@ -374,9 +306,9 @@ func CommentOnPR(
 					Body:      body,
 					UpdatedAt: time.Now(),
 				},
-			}
+			}, err
 		},
-	})
+	)
 }
 
 func ApprovePR(
@@ -386,29 +318,16 @@ func ApprovePR(
 	comment string,
 ) tea.Cmd {
 	prNumber := pr.GetNumber()
-	args := []string{
-		"pr",
-		"review",
-		"-R",
-		pr.GetRepoNameWithOwner(),
-		fmt.Sprint(prNumber),
-		"--approve",
-	}
-	if comment != "" {
-		args = append(args, "--body", comment)
-	}
-	return fireTask(ctx, GitHubTask{
-		Id:           buildTaskId("pr_approve", prNumber),
-		Args:         args,
-		Section:      section,
-		StartText:    fmt.Sprintf("Approving pr #%d", prNumber),
-		FinishedText: fmt.Sprintf("pr #%d has been approved", prNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			return UpdatePRMsg{
-				PrNumber: prNumber,
-			}
+	return runMRAction(
+		ctx, section,
+		buildTaskId("pr_approve", prNumber),
+		fmt.Sprintf("Approving pr #%d", prNumber),
+		fmt.Sprintf("pr #%d has been approved", prNumber),
+		func() (tea.Msg, error) {
+			err := data.ApproveMergeRequest(pr.GetRepoNameWithOwner(), prNumber, comment)
+			return UpdatePRMsg{PrNumber: prNumber}, err
 		},
-	})
+	)
 }
 
 func ApproveWorkflows(

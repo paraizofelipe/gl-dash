@@ -1,19 +1,16 @@
 package data
 
 import (
-	"encoding/json"
-	"os/exec"
 	"strings"
 	"sync"
 
 	"charm.land/log/v2"
+	gitlabapi "gitlab.com/gitlab-org/api/client-go"
 )
 
 var (
 	repoLabelCache = make(map[string][]Label)
 	labelCacheMu   sync.RWMutex
-	// execCommand is injectable for testing; defaults to exec.Command
-	execCommand = exec.Command
 )
 
 func CachedRepoLabels(repoNameWithOwner string) ([]Label, bool) {
@@ -24,38 +21,25 @@ func CachedRepoLabels(repoNameWithOwner string) ([]Label, bool) {
 }
 
 func FetchRepoLabels(repoNameWithOwner string) ([]Label, error) {
-	// Check cache first
 	if cachedLabels, ok := CachedRepoLabels(repoNameWithOwner); ok {
 		return cachedLabels, nil
 	}
 
 	log.Debug("Fetching repo labels", "repoNameWithOwner", repoNameWithOwner)
 
-	cmd := execCommand(
-		"gh",
-		"label",
-		"list",
-		"-R",
-		repoNameWithOwner,
-		"--json",
-		"name,description,color",
-		"--limit",
-		"300",
-	)
-	output, err := cmd.Output()
+	glLabels, err := listProjectLabels(repoNameWithOwner)
 	if err != nil {
 		return nil, err
 	}
 
-	var labels []Label
-	if err := json.Unmarshal(output, &labels); err != nil {
-		return nil, err
-	}
-
-	filteredLabels := make([]Label, 0, len(labels))
-	for _, label := range labels {
-		if strings.TrimSpace(label.Name) != "" {
-			filteredLabels = append(filteredLabels, label)
+	filteredLabels := make([]Label, 0, len(glLabels))
+	for _, l := range glLabels {
+		if strings.TrimSpace(l.Name) != "" {
+			filteredLabels = append(filteredLabels, Label{
+				Name:        l.Name,
+				Color:       l.Color,
+				Description: l.Description,
+			})
 		}
 	}
 
@@ -75,6 +59,31 @@ func FetchRepoLabels(repoNameWithOwner string) ([]Label, error) {
 		len(filteredLabels),
 	)
 	return filteredLabels, nil
+}
+
+func listProjectLabels(projectPath string) ([]*gitlabapi.Label, error) {
+	c, err := resolveRESTClient()
+	if err != nil {
+		return nil, err
+	}
+
+	opts := &gitlabapi.ListLabelsOptions{
+		ListOptions: gitlabapi.ListOptions{PerPage: 100, Page: 1},
+	}
+
+	var all []*gitlabapi.Label
+	for {
+		labels, resp, err := c.Labels.ListLabels(projectPath, opts)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, labels...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return all, nil
 }
 
 func ClearLabelCache() {

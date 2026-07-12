@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/cli/browser"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/git"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
@@ -289,19 +289,12 @@ func CheckoutPR(ctx *context.ProgramContext, prNumber int, repoName string) (tea
 	}
 	startCmd := ctx.StartTask(task)
 	return tea.Batch(startCmd, func() tea.Msg {
-		c := exec.Command(
-			"gh",
-			"pr",
-			"checkout",
-			fmt.Sprint(prNumber),
-		)
 		userHomeDir, _ := os.UserHomeDir()
 		if strings.HasPrefix(repoPath, "~") {
 			repoPath = strings.Replace(repoPath, "~", userHomeDir, 1)
 		}
 
-		c.Dir = repoPath
-		err := c.Run()
+		err := git.CheckoutMergeRequest(repoPath, prNumber)
 		return constants.TaskFinishedMsg{TaskId: taskId, Err: err}
 	}), nil
 }

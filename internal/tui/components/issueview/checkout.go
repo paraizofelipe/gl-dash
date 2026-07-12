@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/git"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
@@ -43,22 +43,17 @@ func (m *Model) Checkout() (tea.Cmd, error) {
 	}
 	startCmd := m.ctx.StartTask(task)
 	return tea.Batch(startCmd, func() tea.Msg {
-		c := exec.Command(
-			"gh",
-			"issue",
-			"develop",
-			fmt.Sprint(issueNumber),
-			"-R",
-			repoName,
-			"--checkout",
-		)
 		userHomeDir, _ := os.UserHomeDir()
 		if strings.HasPrefix(repoPath, "~") {
 			repoPath = strings.Replace(repoPath, "~", userHomeDir, 1)
 		}
 
-		c.Dir = repoPath
-		err := c.Run()
+		branchName := issueBranchName(issueNumber)
+		err := git.CheckoutBranch(repoPath, branchName)
 		return constants.TaskFinishedMsg{TaskId: taskId, Err: err}
 	}), nil
+}
+
+func issueBranchName(issueNumber int) string {
+	return fmt.Sprintf("%d-issue", issueNumber)
 }
