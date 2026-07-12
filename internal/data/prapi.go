@@ -1,20 +1,21 @@
 package data
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"charm.land/log/v2"
-	gh "github.com/cli/go-gh/v2/pkg/api"
 	graphql "github.com/cli/shurcooL-graphql"
 	checks "github.com/dlvhdr/x/gh-checks"
-	"github.com/shurcooL/githubv4"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
+	"github.com/dlvhdr/gh-dash/v4/internal/gitlab"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
 
@@ -390,11 +391,6 @@ func (r ReviewRequestNode) IsTeam() bool {
 	return r.RequestedReviewer.Team.Slug != ""
 }
 
-type PRLabel struct {
-	Color string
-	Name  string
-}
-
 type PRLabels struct {
 	Nodes []Label
 }
@@ -473,10 +469,6 @@ func (e EnrichedPullRequestData) ToPullRequestData() PullRequestData {
 	}
 }
 
-func makePullRequestsQuery(query string) string {
-	return fmt.Sprintf("is:pr archived:false %s sort:updated", query)
-}
-
 type PullRequestsResponse struct {
 	Prs        []PullRequestData
 	TotalCount int
@@ -484,11 +476,11 @@ type PullRequestsResponse struct {
 }
 
 var (
-	client       *gh.GraphQLClient
-	cachedClient *gh.GraphQLClient
+	client       *graphql.Client
+	cachedClient *graphql.Client
 )
 
-func SetClient(c *gh.GraphQLClient) {
+func SetClient(c *graphql.Client) {
 	client = c
 	cachedClient = c
 }
@@ -505,98 +497,443 @@ func IsEnrichmentCacheCleared() bool {
 	return cachedClient == nil
 }
 
-func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequestsResponse, error) {
-	var err error
-	if client == nil {
-		if config.IsFeatureEnabled(config.FF_MOCK_DATA) {
-			log.Info("using mock data", "server", "https://localhost:3000")
-			http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{
-				InsecureSkipVerify: true,
-			}
-			client, err = gh.NewGraphQLClient(
-				gh.ClientOptions{Host: "localhost:3000", AuthToken: "fake-token"},
-			)
-		} else {
-			level := os.Getenv("LOG_LEVEL")
-			opts := gh.ClientOptions{}
-			if level == "debug" {
-				logger := NewHTTPLogger(0)
-				opts.Log = &logger
-				opts.LogVerboseHTTP = true
-				opts.LogColorize = true
-			}
-			client, err = gh.NewGraphQLClient(opts)
-		}
+func resolveGraphQLClient() (*graphql.Client, error) {
+	if client != nil {
+		return client, nil
 	}
+	if config.IsFeatureEnabled(config.FF_MOCK_DATA) {
+		log.Info("using mock data", "server", "https://localhost:3000")
+		if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		}
+		client = graphql.NewClient(
+			"https://localhost:3000/api/graphql",
+			&http.Client{Transport: http.DefaultTransport},
+		)
+		return client, nil
+	}
+	c, err := gitlab.GraphQLClient()
+	if err != nil {
+		return nil, err
+	}
+	client = c
+	return client, nil
+}
 
+type gitlabLabelNode struct {
+	Title       string
+	Color       string
+	Description string
+}
+
+type gitlabUserNode struct {
+	Username string
+}
+
+func convertLabelNodes(nodes []gitlabLabelNode) []Label {
+	converted := make([]Label, len(nodes))
+	for i, n := range nodes {
+		converted[i] = Label{Name: n.Title, Color: n.Color, Description: n.Description}
+	}
+	return converted
+}
+
+func labelsFromNodes(nodes []gitlabLabelNode) PRLabels {
+	return PRLabels{Nodes: convertLabelNodes(nodes)}
+}
+
+func issueLabelsFromNodes(nodes []gitlabLabelNode) IssueLabels {
+	return IssueLabels{Nodes: convertLabelNodes(nodes)}
+}
+
+func assigneesFromNodes(nodes []gitlabUserNode) Assignees {
+	converted := make([]Assignee, len(nodes))
+	for i, n := range nodes {
+		converted[i] = Assignee{Login: n.Username}
+	}
+	return Assignees{Nodes: converted}
+}
+
+func optionalGraphQLValue[T ~string](s string) *T {
+	if s == "" {
+		return nil
+	}
+	v := T(s)
+	return &v
+}
+
+func optionalGraphQLStringList[T ~string](values []string) *[]T {
+	if len(values) == 0 {
+		return nil
+	}
+	list := make([]T, len(values))
+	for i, v := range values {
+		list[i] = T(v)
+	}
+	return &list
+}
+
+type IssuableState string
+
+type MergeRequestState string
+
+func repositoryFromProjectPath(projectPath string) Repository {
+	if projectPath == "" {
+		return Repository{}
+	}
+	idx := strings.LastIndex(projectPath, "/")
+	if idx < 0 {
+		return Repository{Name: projectPath, NameWithOwner: projectPath}
+	}
+	return Repository{
+		Name:          projectPath[idx+1:],
+		Owner:         Owner{Login: projectPath[:idx]},
+		NameWithOwner: projectPath,
+	}
+}
+
+func mergeableFromDetailedStatus(status string) string {
+	switch status {
+	case "CONFLICT":
+		return "CONFLICTING"
+	case "MERGEABLE":
+		return "MERGEABLE"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func reviewDecisionFromApproved(approved bool) string {
+	if approved {
+		return "APPROVED"
+	}
+	return "REVIEW_REQUIRED"
+}
+
+func mergeStateStatusFromDetailedStatus(status string) MergeStateStatus {
+	switch status {
+	case "MERGEABLE":
+		return "CLEAN"
+	case "CI_STILL_RUNNING":
+		return "UNSTABLE"
+	case "DISCUSSIONS_NOT_RESOLVED", "NOT_APPROVED", "DRAFT_STATUS":
+		return "BLOCKED"
+	default:
+		return ""
+	}
+}
+
+type mergeRequestNode struct {
+	Iid                 string
+	Title               string
+	Description         string
+	State               string
+	Draft               bool
+	Author              struct{ Username string }
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	WebUrl              string
+	SourceBranch        string
+	TargetBranch        string
+	DetailedMergeStatus string
+	Approved            bool
+	DiffStatsSummary    struct {
+		Additions int
+		Deletions int
+	}
+	Labels struct {
+		Nodes []gitlabLabelNode
+	} `graphql:"labels(first: 6)"`
+	Assignees struct {
+		Nodes []gitlabUserNode
+	} `graphql:"assignees(first: 10)"`
+}
+
+func (n mergeRequestNode) toPullRequestData(projectPath string) PullRequestData {
+	number, _ := strconv.Atoi(n.Iid)
+	return PullRequestData{
+		Number:           number,
+		Title:            n.Title,
+		Author:           struct{ Login string }{Login: n.Author.Username},
+		CreatedAt:        n.CreatedAt,
+		UpdatedAt:        n.UpdatedAt,
+		Url:              n.WebUrl,
+		State:            n.State,
+		IsDraft:          n.Draft,
+		HeadRefName:      n.SourceBranch,
+		BaseRefName:      n.TargetBranch,
+		Additions:        n.DiffStatsSummary.Additions,
+		Deletions:        n.DiffStatsSummary.Deletions,
+		Mergeable:        mergeableFromDetailedStatus(n.DetailedMergeStatus),
+		ReviewDecision:   reviewDecisionFromApproved(n.Approved),
+		MergeStateStatus: mergeStateStatusFromDetailedStatus(n.DetailedMergeStatus),
+		IsInMergeQueue:   false,
+		Labels:           labelsFromNodes(n.Labels.Nodes),
+		Assignees:        assigneesFromNodes(n.Assignees.Nodes),
+		Repository:       repositoryFromProjectPath(projectPath),
+	}
+}
+
+func (n mergeRequestNode) toEnrichedPullRequestData(projectPath string) EnrichedPullRequestData {
+	number, _ := strconv.Atoi(n.Iid)
+	return EnrichedPullRequestData{
+		Number:         number,
+		Title:          n.Title,
+		Body:           n.Description,
+		Author:         struct{ Login string }{Login: n.Author.Username},
+		CreatedAt:      n.CreatedAt,
+		UpdatedAt:      n.UpdatedAt,
+		Url:            n.WebUrl,
+		State:          n.State,
+		IsDraft:        n.Draft,
+		HeadRefName:    n.SourceBranch,
+		BaseRefName:    n.TargetBranch,
+		Additions:      n.DiffStatsSummary.Additions,
+		Deletions:      n.DiffStatsSummary.Deletions,
+		Mergeable:      mergeableFromDetailedStatus(n.DetailedMergeStatus),
+		ReviewDecision: reviewDecisionFromApproved(n.Approved),
+		Labels:         labelsFromNodes(n.Labels.Nodes),
+		Assignees:      assigneesFromNodes(n.Assignees.Nodes),
+		Repository:     repositoryFromProjectPath(projectPath),
+	}
+}
+
+func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequestsResponse, error) {
+	c, err := resolveGraphQLClient()
 	if err != nil {
 		return PullRequestsResponse{}, err
 	}
 
-	var queryResult struct {
-		Search struct {
-			Nodes []struct {
-				PullRequest PullRequestData `graphql:"... on PullRequest"`
-			}
-			IssueCount int
-			PageInfo   PageInfo
-		} `graphql:"search(type: ISSUE, first: $limit, after: $endCursor, query: $query)"`
+	currentUsername, err := CurrentLoginName()
+	if err != nil {
+		log.Warn("failed to resolve current username for @me", "err", err)
 	}
+	translated := TranslateSearchQuery(query, currentUsername)
+	for _, u := range translated.Unsupported {
+		log.Warn("search qualifier has no GitLab equivalent, ignoring", "qualifier", u)
+	}
+	if translated.NotAuthorUsername != "" {
+		log.Warn(
+			"search qualifier has no GitLab equivalent, ignoring",
+			"qualifier", "-author:"+translated.NotAuthorUsername,
+		)
+	}
+
 	var endCursor *string
 	if pageInfo != nil {
 		endCursor = &pageInfo.EndCursor
 	}
-	variables := map[string]any{
-		"query":     graphql.String(makePullRequestsQuery(query)),
-		"limit":     graphql.Int(limit),
-		"endCursor": (*graphql.String)(endCursor),
-	}
-	log.Debug("Fetching PRs", "query", query, "limit", limit, "endCursor", endCursor)
-	err = client.Query("SearchPullRequests", &queryResult, variables)
-	if err != nil {
-		return PullRequestsResponse{}, err
-	}
-	log.Info("Successfully fetched PRs", "count", queryResult.Search.IssueCount)
 
-	prs := make([]PullRequestData, 0, len(queryResult.Search.Nodes))
-	for _, node := range queryResult.Search.Nodes {
-		prs = append(prs, node.PullRequest)
+	log.Debug("Fetching MRs", "query", query, "limit", limit, "endCursor", endCursor)
+
+	var nodes []mergeRequestNode
+	var totalCount int
+	var respPageInfo PageInfo
+
+	labels := optionalGraphQLStringList[graphql.String](translated.Labels)
+
+	if translated.ProjectPath != "" {
+		var sourceBranch []string
+		if translated.SourceBranch != "" {
+			sourceBranch = []string{translated.SourceBranch}
+		}
+		sourceBranches := optionalGraphQLStringList[graphql.String](sourceBranch)
+
+		var queryResult struct {
+			Project struct {
+				MergeRequests struct {
+					Nodes    []mergeRequestNode
+					Count    int
+					PageInfo PageInfo
+				} `graphql:"mergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, authorUsername: $authorUsername, assigneeUsername: $assigneeUsername, reviewerUsername: $reviewerUsername, labels: $labels, sourceBranches: $sourceBranches)"`
+			} `graphql:"project(fullPath: $fullPath)"`
+		}
+		variables := map[string]any{
+			"fullPath":         graphql.ID(translated.ProjectPath),
+			"limit":            graphql.Int(limit),
+			"endCursor":        (*graphql.String)(endCursor),
+			"state":            optionalGraphQLValue[MergeRequestState](translated.State),
+			"authorUsername":   optionalGraphQLValue[graphql.String](translated.AuthorUsername),
+			"assigneeUsername": optionalGraphQLValue[graphql.String](translated.AssigneeUsername),
+			"reviewerUsername": optionalGraphQLValue[graphql.String](translated.ReviewerUsername),
+			"labels":           labels,
+			"sourceBranches":   sourceBranches,
+		}
+		err = c.QueryNamed(context.Background(), "ProjectMergeRequests", &queryResult, variables)
+		if err != nil {
+			return PullRequestsResponse{}, err
+		}
+		nodes = queryResult.Project.MergeRequests.Nodes
+		totalCount = queryResult.Project.MergeRequests.Count
+		respPageInfo = queryResult.Project.MergeRequests.PageInfo
+	} else {
+		state := optionalGraphQLValue[MergeRequestState](translated.State)
+
+		reviewerUsername := translated.ReviewerUsername
+		if reviewerUsername != "" && reviewerUsername != currentUsername {
+			log.Warn(
+				"search qualifier only supported for the current user without project:, ignoring",
+				"qualifier", "review-requested:"+reviewerUsername,
+			)
+			reviewerUsername = ""
+		}
+		assigneeUsername := translated.AssigneeUsername
+		if assigneeUsername != "" && assigneeUsername != currentUsername {
+			log.Warn(
+				"search qualifier only supported for the current user without project:, ignoring",
+				"qualifier", "assignee:"+assigneeUsername,
+			)
+			assigneeUsername = ""
+		}
+		authorUsername := translated.AuthorUsername
+		if authorUsername != "" && authorUsername != currentUsername {
+			log.Warn(
+				"search qualifier only supported for the current user without project:, ignoring",
+				"qualifier", "author:"+authorUsername,
+			)
+			authorUsername = ""
+		}
+
+		switch {
+		case reviewerUsername != "":
+			var queryResult struct {
+				CurrentUser struct {
+					ReviewRequestedMergeRequests struct {
+						Nodes    []mergeRequestNode
+						Count    int
+						PageInfo PageInfo
+					} `graphql:"reviewRequestedMergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, labels: $labels, authorUsername: $authorUsername, assigneeUsername: $assigneeUsername)"`
+				}
+			}
+			variables := map[string]any{
+				"limit":            graphql.Int(limit),
+				"endCursor":        (*graphql.String)(endCursor),
+				"state":            state,
+				"labels":           labels,
+				"authorUsername":   optionalGraphQLValue[graphql.String](authorUsername),
+				"assigneeUsername": optionalGraphQLValue[graphql.String](assigneeUsername),
+			}
+			err = c.QueryNamed(
+				context.Background(),
+				"MyReviewRequestedMergeRequests",
+				&queryResult,
+				variables,
+			)
+			if err != nil {
+				return PullRequestsResponse{}, err
+			}
+			nodes = queryResult.CurrentUser.ReviewRequestedMergeRequests.Nodes
+			totalCount = queryResult.CurrentUser.ReviewRequestedMergeRequests.Count
+			respPageInfo = queryResult.CurrentUser.ReviewRequestedMergeRequests.PageInfo
+		case assigneeUsername != "" && authorUsername == "":
+			var queryResult struct {
+				CurrentUser struct {
+					AssignedMergeRequests struct {
+						Nodes    []mergeRequestNode
+						Count    int
+						PageInfo PageInfo
+					} `graphql:"assignedMergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, labels: $labels)"`
+				}
+			}
+			variables := map[string]any{
+				"limit":     graphql.Int(limit),
+				"endCursor": (*graphql.String)(endCursor),
+				"state":     state,
+				"labels":    labels,
+			}
+			err = c.QueryNamed(
+				context.Background(),
+				"MyAssignedMergeRequests",
+				&queryResult,
+				variables,
+			)
+			if err != nil {
+				return PullRequestsResponse{}, err
+			}
+			nodes = queryResult.CurrentUser.AssignedMergeRequests.Nodes
+			totalCount = queryResult.CurrentUser.AssignedMergeRequests.Count
+			respPageInfo = queryResult.CurrentUser.AssignedMergeRequests.PageInfo
+		default:
+			var queryResult struct {
+				CurrentUser struct {
+					AuthoredMergeRequests struct {
+						Nodes    []mergeRequestNode
+						Count    int
+						PageInfo PageInfo
+					} `graphql:"authoredMergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, labels: $labels, assigneeUsername: $assigneeUsername)"`
+				}
+			}
+			variables := map[string]any{
+				"limit":            graphql.Int(limit),
+				"endCursor":        (*graphql.String)(endCursor),
+				"state":            state,
+				"labels":           labels,
+				"assigneeUsername": optionalGraphQLValue[graphql.String](assigneeUsername),
+			}
+			err = c.QueryNamed(context.Background(), "MyMergeRequests", &queryResult, variables)
+			if err != nil {
+				return PullRequestsResponse{}, err
+			}
+			nodes = queryResult.CurrentUser.AuthoredMergeRequests.Nodes
+			totalCount = queryResult.CurrentUser.AuthoredMergeRequests.Count
+			respPageInfo = queryResult.CurrentUser.AuthoredMergeRequests.PageInfo
+		}
+	}
+
+	log.Info("Successfully fetched MRs", "count", totalCount)
+
+	prs := make([]PullRequestData, 0, len(nodes))
+	for _, n := range nodes {
+		prs = append(prs, n.toPullRequestData(translated.ProjectPath))
 	}
 
 	return PullRequestsResponse{
 		Prs:        prs,
-		TotalCount: queryResult.Search.IssueCount,
-		PageInfo:   queryResult.Search.PageInfo,
+		TotalCount: totalCount,
+		PageInfo:   respPageInfo,
 	}, nil
 }
 
-func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
-	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
-		if err != nil {
-			return EnrichedPullRequestData{}, err
-		}
+func parseMergeRequestUrl(mrUrl string) (fullPath string, iid string, err error) {
+	parsedUrl, err := url.Parse(mrUrl)
+	if err != nil {
+		return "", "", err
 	}
+	const sep = "/-/merge_requests/"
+	path := strings.TrimPrefix(parsedUrl.Path, "/")
+	before, after, found := strings.Cut(path, sep)
+	if !found || before == "" || after == "" {
+		return "", "", fmt.Errorf("not a merge request URL: %s", mrUrl)
+	}
+	return before, after, nil
+}
 
-	var queryResult struct {
-		Resource struct {
-			PullRequest EnrichedPullRequestData `graphql:"... on PullRequest"`
-		} `graphql:"resource(url: $url)"`
-	}
-	parsedUrl, err := url.Parse(prUrl)
+func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
+	fullPath, iid, err := parseMergeRequestUrl(prUrl)
 	if err != nil {
 		return EnrichedPullRequestData{}, err
 	}
+
+	c, err := resolveGraphQLClient()
+	if err != nil {
+		return EnrichedPullRequestData{}, err
+	}
+
+	var queryResult struct {
+		Project struct {
+			MergeRequest mergeRequestNode `graphql:"mergeRequest(iid: $iid)"`
+		} `graphql:"project(fullPath: $fullPath)"`
+	}
 	variables := map[string]any{
-		"url": githubv4.URI{URL: parsedUrl},
+		"fullPath": graphql.ID(fullPath),
+		"iid":      graphql.String(iid),
 	}
 	log.Debug("Fetching PR", "url", prUrl)
-	err = client.Query("FetchPullRequest", &queryResult, variables)
+	err = c.QueryNamed(context.Background(), "FetchMergeRequest", &queryResult, variables)
 	if err != nil {
 		return EnrichedPullRequestData{}, err
 	}
 	log.Info("Successfully fetched PR", "url", prUrl)
 
-	return queryResult.Resource.PullRequest, nil
+	return queryResult.Project.MergeRequest.toEnrichedPullRequestData(fullPath), nil
 }

@@ -252,7 +252,7 @@ func (m *Model) fetchPRsCmd() tea.Cmd {
 			limit = &m.Ctx.Config.Defaults.PrsLimit
 		}
 		res, err := data.FetchPullRequests(
-			fmt.Sprintf("author:@me repo:%s", git.GetRepoShortName(m.Ctx.RepoUrl)),
+			fmt.Sprintf("author:@me project:%s", git.GetRepoShortName(m.Ctx.RepoUrl)),
 			*limit,
 			nil,
 		)
@@ -290,7 +290,11 @@ func (m *Model) fetchPRCmd(branch string) []tea.Cmd {
 	startCmd := m.Ctx.StartTask(task)
 	return []tea.Cmd{startCmd, func() tea.Msg {
 		res, err := data.FetchPullRequests(
-			fmt.Sprintf("author:@me repo:%s head:%s", git.GetRepoShortName(m.Ctx.RepoUrl), branch),
+			fmt.Sprintf(
+				"author:@me project:%s head:%s",
+				git.GetRepoShortName(m.Ctx.RepoUrl),
+				branch,
+			),
 			1,
 			nil,
 		)

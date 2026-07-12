@@ -103,18 +103,19 @@ func (m *Model) CursorEnd() {
 
 func (m *Model) Repo() (cmpcontroller.RepoRef, bool) {
 	for token := range strings.FieldsSeq(m.Value()) {
-		if strings.HasPrefix(token, "repo:") {
-			repo, found := strings.CutPrefix(token, "repo:")
-			parts := strings.Split(repo, "/")
-			if len(parts) < 2 {
-				return cmpcontroller.RepoRef{}, false
-			}
-			return cmpcontroller.RepoRef{
-				NameWithOwner: repo,
-				Owner:         parts[0],
-				Name:          parts[1],
-			}, found
+		repo, found := strings.CutPrefix(token, "project:")
+		if !found {
+			continue
 		}
+		idx := strings.LastIndex(repo, "/")
+		if idx < 0 {
+			return cmpcontroller.RepoRef{}, false
+		}
+		return cmpcontroller.RepoRef{
+			NameWithOwner: repo,
+			Owner:         repo[:idx],
+			Name:          repo[idx+1:],
+		}, true
 	}
 	return cmpcontroller.RepoRef{}, false
 }

@@ -24,7 +24,11 @@ func RESTClient() (*gitlab.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := gitlab.NewClient(auth.Token, gitlab.WithBaseURL(baseURL(auth)+"/api/v4"))
+	newClient := gitlab.NewClient
+	if auth.IsJobToken {
+		newClient = gitlab.NewJobClient
+	}
+	c, err := newClient(auth.Token, gitlab.WithBaseURL(baseURL(auth)+"/api/v4"))
 	if err != nil {
 		return nil, err
 	}
@@ -36,10 +40,17 @@ func baseURL(auth AuthConfig) string {
 	return auth.APIProtocol + "://" + auth.Host
 }
 
-type tokenTransport struct{ token string }
+type tokenTransport struct {
+	token      string
+	isJobToken bool
+}
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Set("PRIVATE-TOKEN", t.token)
+	header := gitlab.AccessTokenHeaderName
+	if t.isJobToken {
+		header = gitlab.JobTokenHeaderName
+	}
+	req.Header.Set(header, t.token)
 	return http.DefaultTransport.RoundTrip(req)
 }
 
@@ -51,7 +62,7 @@ func GraphQLClient() (*graphql.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	hc := &http.Client{Transport: &tokenTransport{token: auth.Token}}
+	hc := &http.Client{Transport: &tokenTransport{token: auth.Token, isJobToken: auth.IsJobToken}}
 	graphqlClient = graphql.NewClient(baseURL(auth)+gitlab.GraphQLAPIEndpoint, hc)
 	return graphqlClient, nil
 }

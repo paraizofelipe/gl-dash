@@ -1,8 +1,10 @@
 package data
 
 import (
+	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"time"
 
 	"charm.land/log/v2"
@@ -95,54 +97,159 @@ func (data IssueData) GetCreatedAt() time.Time {
 	return data.CreatedAt
 }
 
-func makeIssuesQuery(query string) string {
-	return fmt.Sprintf("is:issue archived:false %s sort:updated", query)
+type issueNode struct {
+	Iid         string
+	Title       string
+	Description string
+	State       string
+	Author      struct{ Username string }
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	WebUrl      string
+	Labels      struct {
+		Nodes []gitlabLabelNode
+	} `graphql:"labels(first: 20)"`
+	Assignees struct {
+		Nodes []gitlabUserNode
+	} `graphql:"assignees(first: 3)"`
+}
+
+func (n issueNode) toIssueData(projectPath string) IssueData {
+	number, _ := strconv.Atoi(n.Iid)
+	return IssueData{
+		Number:     number,
+		Title:      n.Title,
+		Body:       n.Description,
+		State:      n.State,
+		Author:     struct{ Login string }{Login: n.Author.Username},
+		CreatedAt:  n.CreatedAt,
+		UpdatedAt:  n.UpdatedAt,
+		Url:        n.WebUrl,
+		Labels:     issueLabelsFromNodes(n.Labels.Nodes),
+		Assignees:  assigneesFromNodes(n.Assignees.Nodes),
+		Repository: repositoryFromProjectPath(projectPath),
+	}
 }
 
 func FetchIssues(query string, limit int, pageInfo *PageInfo) (IssuesResponse, error) {
-	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
-	}
-
+	c, err := resolveGraphQLClient()
 	if err != nil {
 		return IssuesResponse{}, err
 	}
 
-	var queryResult struct {
-		Search struct {
-			Nodes []struct {
-				Issue IssueData `graphql:"... on Issue"`
-			}
-			IssueCount int
-			PageInfo   PageInfo
-		} `graphql:"search(type: ISSUE, first: $limit, after: $endCursor, query: $query)"`
+	currentUsername, err := CurrentLoginName()
+	if err != nil {
+		log.Warn("failed to resolve current username for @me", "err", err)
 	}
+	translated := TranslateSearchQuery(query, currentUsername)
+	for _, u := range translated.Unsupported {
+		log.Warn("search qualifier has no GitLab equivalent, ignoring", "qualifier", u)
+	}
+	if translated.NotAuthorUsername != "" {
+		log.Warn(
+			"search qualifier has no GitLab equivalent, ignoring",
+			"qualifier", "-author:"+translated.NotAuthorUsername,
+		)
+	}
+
 	var endCursor *string
 	if pageInfo != nil {
 		endCursor = &pageInfo.EndCursor
 	}
-	variables := map[string]any{
-		"query":     graphql.String(makeIssuesQuery(query)),
-		"limit":     graphql.Int(limit),
-		"endCursor": (*graphql.String)(endCursor),
-	}
 	log.Debug("Fetching issues", "query", query, "limit", limit, "endCursor", endCursor)
-	err = client.Query("SearchIssues", &queryResult, variables)
-	if err != nil {
-		return IssuesResponse{}, err
-	}
-	log.Info("Successfully fetched issues", "query", query, "count", queryResult.Search.IssueCount)
 
-	issues := make([]IssueData, 0, len(queryResult.Search.Nodes))
-	for _, node := range queryResult.Search.Nodes {
-		issues = append(issues, node.Issue)
+	var nodes []issueNode
+	var totalCount int
+	var respPageInfo PageInfo
+
+	labelName := optionalGraphQLStringList[graphql.String](translated.Labels)
+	issueState := translated.State
+	if issueState == "merged" {
+		log.Warn(
+			"search qualifier has no GitLab equivalent for issues, ignoring",
+			"qualifier", "is:merged",
+		)
+		issueState = ""
+	}
+	state := optionalGraphQLValue[IssuableState](issueState)
+
+	if translated.ProjectPath != "" {
+		var queryResult struct {
+			Project struct {
+				Issues struct {
+					Nodes    []issueNode
+					Count    int
+					PageInfo PageInfo
+				} `graphql:"issues(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, authorUsername: $authorUsername, assigneeUsername: $assigneeUsername, labelName: $labelName)"`
+			} `graphql:"project(fullPath: $fullPath)"`
+		}
+		variables := map[string]any{
+			"fullPath":         graphql.ID(translated.ProjectPath),
+			"limit":            graphql.Int(limit),
+			"endCursor":        (*graphql.String)(endCursor),
+			"state":            state,
+			"authorUsername":   optionalGraphQLValue[graphql.String](translated.AuthorUsername),
+			"assigneeUsername": optionalGraphQLValue[graphql.String](translated.AssigneeUsername),
+			"labelName":        labelName,
+		}
+		err = c.QueryNamed(context.Background(), "ProjectIssues", &queryResult, variables)
+		if err != nil {
+			return IssuesResponse{}, err
+		}
+		nodes = queryResult.Project.Issues.Nodes
+		totalCount = queryResult.Project.Issues.Count
+		respPageInfo = queryResult.Project.Issues.PageInfo
+	} else {
+		authorUsername := translated.AuthorUsername
+		if authorUsername == "" && translated.AssigneeUsername == "" {
+			if currentUsername == "" {
+				if err != nil {
+					return IssuesResponse{}, fmt.Errorf(
+						"cannot resolve current user for an unscoped issue search: %w", err,
+					)
+				}
+				return IssuesResponse{}, fmt.Errorf(
+					"cannot resolve current user for an unscoped issue search",
+				)
+			}
+			authorUsername = currentUsername
+		}
+
+		var queryResult struct {
+			Issues struct {
+				Nodes    []issueNode
+				Count    int
+				PageInfo PageInfo
+			} `graphql:"issues(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, authorUsername: $authorUsername, assigneeUsername: $assigneeUsername, labelName: $labelName)"`
+		}
+		variables := map[string]any{
+			"limit":            graphql.Int(limit),
+			"endCursor":        (*graphql.String)(endCursor),
+			"state":            state,
+			"authorUsername":   optionalGraphQLValue[graphql.String](authorUsername),
+			"assigneeUsername": optionalGraphQLValue[graphql.String](translated.AssigneeUsername),
+			"labelName":        labelName,
+		}
+		err = c.QueryNamed(context.Background(), "MyIssues", &queryResult, variables)
+		if err != nil {
+			return IssuesResponse{}, err
+		}
+		nodes = queryResult.Issues.Nodes
+		totalCount = queryResult.Issues.Count
+		respPageInfo = queryResult.Issues.PageInfo
+	}
+
+	log.Info("Successfully fetched issues", "query", query, "count", totalCount)
+
+	issues := make([]IssueData, 0, len(nodes))
+	for _, n := range nodes {
+		issues = append(issues, n.toIssueData(translated.ProjectPath))
 	}
 
 	return IssuesResponse{
 		Issues:     issues,
-		TotalCount: queryResult.Search.IssueCount,
-		PageInfo:   queryResult.Search.PageInfo,
+		TotalCount: totalCount,
+		PageInfo:   respPageInfo,
 	}, nil
 }
 
@@ -155,8 +262,8 @@ type IssuesResponse struct {
 // FetchIssue fetches a single issue by its GitHub URL
 func FetchIssue(issueUrl string) (IssueData, error) {
 	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
+	if githubClient == nil {
+		githubClient, err = gh.DefaultGraphQLClient()
 		if err != nil {
 			return IssueData{}, err
 		}
@@ -175,7 +282,7 @@ func FetchIssue(issueUrl string) (IssueData, error) {
 		"url": githubv4.URI{URL: parsedUrl},
 	}
 	log.Debug("Fetching Issue", "url", issueUrl)
-	err = client.Query("FetchIssue", &queryResult, variables)
+	err = githubClient.Query("FetchIssue", &queryResult, variables)
 	if err != nil {
 		return IssueData{}, err
 	}

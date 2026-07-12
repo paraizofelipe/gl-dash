@@ -13,6 +13,7 @@ type AuthConfig struct {
 	Host        string
 	Token       string
 	APIProtocol string
+	IsJobToken  bool
 }
 
 func LoadAuthConfig() (AuthConfig, error) {
@@ -29,7 +30,10 @@ func LoadAuthConfig() (AuthConfig, error) {
 	if tok := os.Getenv("GITLAB_TOKEN"); tok != "" {
 		cfg.Token = tok
 	} else if cfg.Token == "" {
-		cfg.Token = os.Getenv("CI_JOB_TOKEN")
+		if tok := os.Getenv("CI_JOB_TOKEN"); tok != "" {
+			cfg.Token = tok
+			cfg.IsJobToken = true
+		}
 	}
 	return cfg, nil
 }

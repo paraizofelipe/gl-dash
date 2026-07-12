@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -202,23 +203,31 @@ type RemoteRepo struct {
 	Name  string
 }
 
-var (
-	sshRemoteRe   = regexp.MustCompile(`^(?:ssh://)?git@([^:/]+)[:/](.+?)(?:\.git)?/?$`)
-	httpsRemoteRe = regexp.MustCompile(`^https?://(?:[^@/]+@)?([^/]+)/(.+?)(?:\.git)?/?$`)
-)
+var scpLikeRemoteRe = regexp.MustCompile(`^git@([^:/]+):(.+)$`)
 
-func ParseRemoteURL(url string) (RemoteRepo, bool) {
-	var host, path string
-	switch {
-	case sshRemoteRe.MatchString(url):
-		m := sshRemoteRe.FindStringSubmatch(url)
-		host, path = m[1], m[2]
-	case httpsRemoteRe.MatchString(url):
-		m := httpsRemoteRe.FindStringSubmatch(url)
-		host, path = m[1], m[2]
+func ParseRemoteURL(remote string) (RemoteRepo, bool) {
+	if m := scpLikeRemoteRe.FindStringSubmatch(remote); m != nil {
+		return remoteRepoFromHostPath(m[1], m[2])
+	}
+
+	u, err := url.Parse(remote)
+	if err != nil {
+		return RemoteRepo{}, false
+	}
+	switch u.Scheme {
+	case "http", "https", "ssh":
 	default:
 		return RemoteRepo{}, false
 	}
+	if u.Hostname() == "" {
+		return RemoteRepo{}, false
+	}
+	return remoteRepoFromHostPath(u.Hostname(), strings.TrimPrefix(u.Path, "/"))
+}
+
+func remoteRepoFromHostPath(host, path string) (RemoteRepo, bool) {
+	path = strings.TrimSuffix(path, ".git")
+	path = strings.TrimSuffix(path, "/")
 	idx := strings.LastIndex(path, "/")
 	if idx < 0 {
 		return RemoteRepo{}, false

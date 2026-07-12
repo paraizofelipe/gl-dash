@@ -1,10 +1,10 @@
 package data
 
 import (
+	"context"
 	"sync"
 
 	"charm.land/log/v2"
-	gh "github.com/cli/go-gh/v2/pkg/api"
 	graphql "github.com/cli/shurcooL-graphql"
 )
 
@@ -18,12 +18,17 @@ type User struct {
 	Name  string `json:"name"`
 }
 
-type MentionableUsersResponse struct {
-	Repository struct {
-		MentionableUsers struct {
-			Nodes []User
-		} `graphql:"mentionableUsers(first: $limit)"`
-	} `graphql:"repository(owner: $owner, name: $name)"`
+type ProjectMembersResponse struct {
+	Project struct {
+		ProjectMembers struct {
+			Nodes []struct {
+				User struct {
+					Username string
+					Name     string
+				} `graphql:"user"`
+			}
+		} `graphql:"projectMembers(first: $limit)"`
+	} `graphql:"project(fullPath: $fullPath)"`
 }
 
 func CachedRepoUsers(repoNameWithOwner string) ([]User, bool) {
@@ -33,9 +38,10 @@ func CachedRepoUsers(repoNameWithOwner string) ([]User, bool) {
 	return users, ok
 }
 
-// FetchRepoUsers fetches users that can be mentioned in a repository.
-// It uses the publicly available mentionableUsers field which includes
-// anyone who can interact with the repository (issue/PR authors, commenters, etc.)
+// FetchRepoUsers fetches a GitLab project's members via projectMembers.
+// Unlike the previous GitHub-based mentionableUsers, this only returns users
+// with an explicit membership/role on the project — commenters or issue/MR
+// authors without membership will not appear in the results.
 func FetchRepoUsers(owner, repoName string) ([]User, error) {
 	// Check cache first
 	repo := owner + "/" + repoName
@@ -54,33 +60,26 @@ func FetchRepoUsers(owner, repoName string) ([]User, error) {
 
 	log.Debug("Fetching repo users", "owner", owner, "repoName", repoName)
 
-	// Initialize client if needed
-	if client == nil {
-		var err error
-		client, err = gh.DefaultGraphQLClient()
-		if err != nil {
-			return nil, err
-		}
+	client, err := resolveGraphQLClient()
+	if err != nil {
+		return nil, err
 	}
 
-	// Query only publicly available mentionable users
-	// This includes anyone who has interacted with the repo (issues, PRs, comments)
-	var result MentionableUsersResponse
+	var result ProjectMembersResponse
 	variables := map[string]any{
-		"owner": graphql.String(owner),
-		"name":  graphql.String(repoName),
-		"limit": graphql.Int(100),
+		"fullPath": graphql.ID(repo),
+		"limit":    graphql.Int(100),
 	}
 
-	err := client.Query("GetMentionableUsers", &result, variables)
+	err = client.QueryNamed(context.Background(), "GetProjectMembers", &result, variables)
 	if err != nil {
 		return nil, err
 	}
 
 	users := make([]User, 0)
-	for _, user := range result.Repository.MentionableUsers.Nodes {
-		if user.Login != "" {
-			users = append(users, user)
+	for _, node := range result.Project.ProjectMembers.Nodes {
+		if node.User.Username != "" {
+			users = append(users, User{Login: node.User.Username, Name: node.User.Name})
 		}
 	}
 

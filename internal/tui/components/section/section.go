@@ -74,11 +74,11 @@ func (options NewSectionOptions) GetConfigFiltersWithCurrentRemoteAdded(
 		return searchValue
 	}
 	for token := range strings.FieldsSeq(searchValue) {
-		if strings.HasPrefix(token, "repo:") {
+		if strings.HasPrefix(token, "project:") {
 			return searchValue
 		}
 	}
-	return fmt.Sprintf("repo:%s/%s %s", ctx.GHRepo.Owner, ctx.GHRepo.Name, searchValue)
+	return fmt.Sprintf("project:%s/%s %s", ctx.GHRepo.Owner, ctx.GHRepo.Name, searchValue)
 }
 
 func NewModel(
@@ -88,7 +88,7 @@ func NewModel(
 	filters := options.GetConfigFiltersWithCurrentRemoteAdded(ctx)
 	isFilteredByCurrentRemote := false
 	if ctx.HasGHRepo() {
-		currentCloneFilter := fmt.Sprintf("repo:%s/%s", ctx.GHRepo.Owner, ctx.GHRepo.Name)
+		currentCloneFilter := fmt.Sprintf("project:%s/%s", ctx.GHRepo.Owner, ctx.GHRepo.Name)
 		for token := range strings.FieldsSeq(filters) {
 			if token == currentCloneFilter {
 				isFilteredByCurrentRemote = true
@@ -211,7 +211,7 @@ func (m *BaseModel) GetConfig() config.SectionConfig {
 func (m *BaseModel) HasRepoNameInConfiguredFilter() bool {
 	filters := m.SearchValue
 	for token := range strings.FieldsSeq(filters) {
-		if strings.HasPrefix(token, "repo:") {
+		if strings.HasPrefix(token, "project:") {
 			return true
 		}
 	}
@@ -223,7 +223,7 @@ func (m *BaseModel) HasCurrentRepoNameInConfiguredFilter() bool {
 	if !m.Ctx.HasGHRepo() {
 		return false
 	}
-	currentCloneFilter := fmt.Sprintf("repo:%s/%s", m.Ctx.GHRepo.Owner, m.Ctx.GHRepo.Name)
+	currentCloneFilter := fmt.Sprintf("project:%s/%s", m.Ctx.GHRepo.Owner, m.Ctx.GHRepo.Name)
 	for token := range strings.FieldsSeq(filters) {
 		if token == currentCloneFilter {
 			return true
@@ -242,7 +242,7 @@ func (m *BaseModel) GetSearchValue() string {
 		return searchValue
 	}
 
-	currentCloneFilter := fmt.Sprintf("repo:%s/%s", m.Ctx.GHRepo.Owner, m.Ctx.GHRepo.Name)
+	currentCloneFilter := fmt.Sprintf("project:%s/%s", m.Ctx.GHRepo.Owner, m.Ctx.GHRepo.Name)
 	var searchValueWithoutCurrentCloneFilter []string
 	for token := range strings.FieldsSeq(searchValue) {
 		if token != currentCloneFilter {

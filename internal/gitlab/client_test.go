@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	graphql "github.com/cli/shurcooL-graphql"
@@ -88,6 +91,88 @@ func TestRESTClient(t *testing.T) {
 
 		require.Same(t, first, second)
 	})
+
+	t.Run(
+		"uses job token header when the resolved token comes from ci job token",
+		func(t *testing.T) {
+			defer SetClients(nil, nil)
+
+			var gotJobToken, gotPrivateToken string
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					gotJobToken = r.Header.Get("Job-Token")
+					gotPrivateToken = r.Header.Get("Private-Token")
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"id":1,"username":"ci-bot"}`))
+				}),
+			)
+			defer server.Close()
+
+			host := strings.TrimPrefix(server.URL, "http://")
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("GITLAB_TOKEN", "")
+			t.Setenv("GITLAB_HOST", host)
+			t.Setenv("CI_JOB_TOKEN", "ci-job-token-xyz")
+			configDir := filepath.Join(homeDir, ".config", "glab-cli")
+			require.NoError(t, os.MkdirAll(configDir, 0o755))
+			cfgYAML := "hosts:\n  " + host + ":\n    api_protocol: http\n"
+			require.NoError(
+				t,
+				os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(cfgYAML), 0o644),
+			)
+
+			c, err := RESTClient()
+			require.NoError(t, err)
+
+			_, _, err = c.Users.CurrentUser()
+			require.NoError(t, err)
+			require.Equal(t, "ci-job-token-xyz", gotJobToken)
+			require.Empty(t, gotPrivateToken)
+		},
+	)
+
+	t.Run(
+		"uses private token header when the resolved token comes from gitlab token",
+		func(t *testing.T) {
+			defer SetClients(nil, nil)
+
+			var gotJobToken, gotPrivateToken string
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					gotJobToken = r.Header.Get("Job-Token")
+					gotPrivateToken = r.Header.Get("Private-Token")
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"id":1,"username":"octocat"}`))
+				}),
+			)
+			defer server.Close()
+
+			host := strings.TrimPrefix(server.URL, "http://")
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("GITLAB_TOKEN", "personal-token-rest")
+			t.Setenv("GITLAB_HOST", host)
+			t.Setenv("CI_JOB_TOKEN", "")
+			configDir := filepath.Join(homeDir, ".config", "glab-cli")
+			require.NoError(t, os.MkdirAll(configDir, 0o755))
+			cfgYAML := "hosts:\n  " + host + ":\n    api_protocol: http\n"
+			require.NoError(
+				t,
+				os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(cfgYAML), 0o644),
+			)
+
+			c, err := RESTClient()
+			require.NoError(t, err)
+
+			_, _, err = c.Users.CurrentUser()
+			require.NoError(t, err)
+			require.Equal(t, "personal-token-rest", gotPrivateToken)
+			require.Empty(t, gotJobToken)
+		},
+	)
 }
 
 func TestGraphQLClient(t *testing.T) {
@@ -135,4 +220,92 @@ func TestGraphQLClient(t *testing.T) {
 
 		require.Same(t, first, second)
 	})
+
+	t.Run(
+		"uses job token header when the resolved token comes from ci job token",
+		func(t *testing.T) {
+			defer SetClients(nil, nil)
+
+			var gotJobToken, gotPrivateToken string
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					gotJobToken = r.Header.Get("Job-Token")
+					gotPrivateToken = r.Header.Get("Private-Token")
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"data":{"currentUser":{"username":"ci-bot"}}}`))
+				}),
+			)
+			defer server.Close()
+
+			host := strings.TrimPrefix(server.URL, "http://")
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("GITLAB_TOKEN", "")
+			t.Setenv("GITLAB_HOST", host)
+			t.Setenv("CI_JOB_TOKEN", "ci-job-token-graphql")
+			configDir := filepath.Join(homeDir, ".config", "glab-cli")
+			require.NoError(t, os.MkdirAll(configDir, 0o755))
+			cfgYAML := "hosts:\n  " + host + ":\n    api_protocol: http\n"
+			require.NoError(
+				t,
+				os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(cfgYAML), 0o644),
+			)
+
+			c, err := GraphQLClient()
+			require.NoError(t, err)
+
+			var query struct {
+				CurrentUser struct {
+					Username graphql.String
+				}
+			}
+			require.NoError(t, c.Query(context.Background(), &query, nil))
+			require.Equal(t, "ci-job-token-graphql", gotJobToken)
+			require.Empty(t, gotPrivateToken)
+		},
+	)
+
+	t.Run(
+		"uses private token header when the resolved token comes from gitlab token",
+		func(t *testing.T) {
+			defer SetClients(nil, nil)
+
+			var gotJobToken, gotPrivateToken string
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					gotJobToken = r.Header.Get("Job-Token")
+					gotPrivateToken = r.Header.Get("Private-Token")
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"data":{"currentUser":{"username":"octocat"}}}`))
+				}),
+			)
+			defer server.Close()
+
+			host := strings.TrimPrefix(server.URL, "http://")
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("GITLAB_TOKEN", "personal-token-graphql")
+			t.Setenv("GITLAB_HOST", host)
+			t.Setenv("CI_JOB_TOKEN", "")
+			configDir := filepath.Join(homeDir, ".config", "glab-cli")
+			require.NoError(t, os.MkdirAll(configDir, 0o755))
+			cfgYAML := "hosts:\n  " + host + ":\n    api_protocol: http\n"
+			require.NoError(
+				t,
+				os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(cfgYAML), 0o644),
+			)
+
+			c, err := GraphQLClient()
+			require.NoError(t, err)
+
+			var query struct {
+				CurrentUser struct {
+					Username graphql.String
+				}
+			}
+			require.NoError(t, c.Query(context.Background(), &query, nil))
+			require.Equal(t, "personal-token-graphql", gotPrivateToken)
+			require.Empty(t, gotJobToken)
+		},
+	)
 }

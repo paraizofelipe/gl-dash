@@ -1,20 +1,18 @@
 package data
 
-import (
-	gh "github.com/cli/go-gh/v2/pkg/api"
-)
+import "context"
 
 func CurrentLoginName() (string, error) {
-	client, err := gh.DefaultGraphQLClient()
+	client, err := resolveGraphQLClient()
 	if err != nil {
-		return "", nil
+		return "", err
 	}
 
 	var query struct {
-		Viewer struct {
-			Login string
+		CurrentUser struct {
+			Username string
 		}
 	}
-	err = client.Query("UserCurrent", &query, nil)
-	return query.Viewer.Login, err
+	err = client.Query(context.Background(), &query, nil)
+	return query.CurrentUser.Username, err
 }

@@ -14,11 +14,13 @@ type VersionResponse struct {
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
+var githubClient *gh.GraphQLClient
+
 func FetchLatestVersion() (VersionResponse, error) {
 	var queryResult VersionResponse
 	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
+	if githubClient == nil {
+		githubClient, err = gh.DefaultGraphQLClient()
 	}
 	if err != nil {
 		return VersionResponse{}, err
@@ -30,7 +32,7 @@ func FetchLatestVersion() (VersionResponse, error) {
 	}
 
 	log.Debug("Fetching latest version")
-	err = client.Query("LatestVersion", &queryResult, variables)
+	err = githubClient.Query("LatestVersion", &queryResult, variables)
 	if err != nil {
 		return VersionResponse{}, err
 	}
@@ -61,8 +63,8 @@ type SponsorsResponse struct {
 func FetchSponsors() (SponsorsResponse, error) {
 	var queryResult SponsorsResponse
 	var err error
-	if client == nil {
-		client, err = gh.DefaultGraphQLClient()
+	if githubClient == nil {
+		githubClient, err = gh.DefaultGraphQLClient()
 	}
 	if err != nil {
 		return SponsorsResponse{}, err
@@ -73,7 +75,7 @@ func FetchSponsors() (SponsorsResponse, error) {
 	}
 
 	log.Debug("Fetching sponsors")
-	err = client.Query("Sponsors", &queryResult, variables)
+	err = githubClient.Query("Sponsors", &queryResult, variables)
 	if err != nil {
 		return SponsorsResponse{}, err
 	}

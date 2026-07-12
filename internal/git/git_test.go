@@ -26,6 +26,12 @@ func TestParseRemoteURL(t *testing.T) {
 			wantOk: true,
 		},
 		{
+			name:   "https with custom port",
+			url:    "https://gitlab.empresa.com:8443/ns/proj.git",
+			want:   RemoteRepo{Host: "gitlab.empresa.com", Owner: "ns", Name: "proj"},
+			wantOk: true,
+		},
+		{
 			name:   "ssh gitlab.com",
 			url:    "git@gitlab.com:ns/proj.git",
 			want:   RemoteRepo{Host: "gitlab.com", Owner: "ns", Name: "proj"},
@@ -35,6 +41,18 @@ func TestParseRemoteURL(t *testing.T) {
 			name:   "ssh self-managed nested subgroup",
 			url:    "git@gitlab.empresa.com:group/subgroup/proj.git",
 			want:   RemoteRepo{Host: "gitlab.empresa.com", Owner: "group/subgroup", Name: "proj"},
+			wantOk: true,
+		},
+		{
+			name:   "ssh explicit scheme without port",
+			url:    "ssh://git@gitlab.com/group/proj.git",
+			want:   RemoteRepo{Host: "gitlab.com", Owner: "group", Name: "proj"},
+			wantOk: true,
+		},
+		{
+			name:   "ssh with custom port",
+			url:    "ssh://git@host:2222/group/proj.git",
+			want:   RemoteRepo{Host: "host", Owner: "group", Name: "proj"},
 			wantOk: true,
 		},
 		{
