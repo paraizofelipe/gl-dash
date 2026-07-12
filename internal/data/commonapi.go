@@ -1,6 +1,8 @@
 package data
 
 import (
+	"sync"
+
 	"charm.land/log/v2"
 	gh "github.com/cli/go-gh/v2/pkg/api"
 	graphql "github.com/cli/shurcooL-graphql"
@@ -14,14 +16,28 @@ type VersionResponse struct {
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
-var githubClient *gh.GraphQLClient
+var (
+	githubClient   *gh.GraphQLClient
+	githubClientMu sync.Mutex
+)
+
+func resolveGithubClient() (*gh.GraphQLClient, error) {
+	githubClientMu.Lock()
+	defer githubClientMu.Unlock()
+	if githubClient != nil {
+		return githubClient, nil
+	}
+	c, err := gh.DefaultGraphQLClient()
+	if err != nil {
+		return nil, err
+	}
+	githubClient = c
+	return githubClient, nil
+}
 
 func FetchLatestVersion() (VersionResponse, error) {
 	var queryResult VersionResponse
-	var err error
-	if githubClient == nil {
-		githubClient, err = gh.DefaultGraphQLClient()
-	}
+	c, err := resolveGithubClient()
 	if err != nil {
 		return VersionResponse{}, err
 	}
@@ -32,7 +48,7 @@ func FetchLatestVersion() (VersionResponse, error) {
 	}
 
 	log.Debug("Fetching latest version")
-	err = githubClient.Query("LatestVersion", &queryResult, variables)
+	err = c.Query("LatestVersion", &queryResult, variables)
 	if err != nil {
 		return VersionResponse{}, err
 	}
@@ -62,10 +78,7 @@ type SponsorsResponse struct {
 
 func FetchSponsors() (SponsorsResponse, error) {
 	var queryResult SponsorsResponse
-	var err error
-	if githubClient == nil {
-		githubClient, err = gh.DefaultGraphQLClient()
-	}
+	c, err := resolveGithubClient()
 	if err != nil {
 		return SponsorsResponse{}, err
 	}
@@ -75,7 +88,7 @@ func FetchSponsors() (SponsorsResponse, error) {
 	}
 
 	log.Debug("Fetching sponsors")
-	err = githubClient.Query("Sponsors", &queryResult, variables)
+	err = c.Query("Sponsors", &queryResult, variables)
 	if err != nil {
 		return SponsorsResponse{}, err
 	}

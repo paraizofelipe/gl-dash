@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	graphql "github.com/cli/shurcooL-graphql"
@@ -308,4 +309,93 @@ func TestGraphQLClient(t *testing.T) {
 			require.Empty(t, gotJobToken)
 		},
 	)
+}
+
+func setupConcurrentClientFixture(t *testing.T, server *httptest.Server, tokenEnvValue string) {
+	t.Helper()
+
+	host := strings.TrimPrefix(server.URL, "http://")
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("GITLAB_TOKEN", tokenEnvValue)
+	t.Setenv("GITLAB_HOST", host)
+	t.Setenv("CI_JOB_TOKEN", "")
+	configDir := filepath.Join(homeDir, ".config", "glab-cli")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	cfgYAML := "hosts:\n  " + host + ":\n    api_protocol: http\n"
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(cfgYAML), 0o644),
+	)
+}
+
+func TestRESTClient_ConcurrentAccess(t *testing.T) {
+	defer SetClients(nil, nil)
+
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":1,"username":"concurrent-rest"}`))
+		}),
+	)
+	defer server.Close()
+	setupConcurrentClientFixture(t, server, "concurrent-rest-token")
+
+	const n = 50
+	var wg sync.WaitGroup
+	results := make([]*gitlab.Client, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i], errs[i] = RESTClient()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := range n {
+		require.NoError(t, errs[i])
+		require.NotNil(t, results[i])
+		require.Same(t, results[0], results[i])
+	}
+}
+
+func TestGraphQLClient_ConcurrentAccess(t *testing.T) {
+	defer SetClients(nil, nil)
+
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"currentUser":{"username":"concurrent-graphql"}}}`))
+		}),
+	)
+	defer server.Close()
+	setupConcurrentClientFixture(t, server, "concurrent-graphql-token")
+
+	const n = 50
+	var wg sync.WaitGroup
+	results := make([]*graphql.Client, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i], errs[i] = GraphQLClient()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := range n {
+		require.NoError(t, errs[i])
+		require.NotNil(t, results[i])
+		require.Same(t, results[0], results[i])
+	}
 }

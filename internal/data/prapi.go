@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/log/v2"
@@ -524,26 +525,35 @@ type PullRequestsResponse struct {
 var (
 	client       *graphql.Client
 	cachedClient *graphql.Client
+	clientMu     sync.Mutex
 )
 
 func SetClient(c *graphql.Client) {
+	clientMu.Lock()
 	client = c
 	cachedClient = c
+	clientMu.Unlock()
 }
 
 // ClearEnrichmentCache clears the cached GraphQL client used for fetching
 // enriched PR/Issue data. Call this when refreshing to ensure fresh data.
 func ClearEnrichmentCache() {
+	clientMu.Lock()
 	cachedClient = nil
+	clientMu.Unlock()
 }
 
 // IsEnrichmentCacheCleared returns true if the enrichment cache is cleared.
 // This is primarily for testing purposes.
 func IsEnrichmentCacheCleared() bool {
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	return cachedClient == nil
 }
 
 func resolveGraphQLClient() (*graphql.Client, error) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	if client != nil {
 		return client, nil
 	}
@@ -566,15 +576,22 @@ func resolveGraphQLClient() (*graphql.Client, error) {
 	return client, nil
 }
 
-var gitlabRESTClient *gitlabapi.Client
+var (
+	gitlabRESTClient   *gitlabapi.Client
+	gitlabRESTClientMu sync.Mutex
+)
 
 // SetRESTClient overrides the cached REST client used to fetch pipeline/job
 // data. Used by tests.
 func SetRESTClient(c *gitlabapi.Client) {
+	gitlabRESTClientMu.Lock()
 	gitlabRESTClient = c
+	gitlabRESTClientMu.Unlock()
 }
 
 func resolveRESTClient() (*gitlabapi.Client, error) {
+	gitlabRESTClientMu.Lock()
+	defer gitlabRESTClientMu.Unlock()
 	if gitlabRESTClient != nil {
 		return gitlabRESTClient, nil
 	}
@@ -584,6 +601,12 @@ func resolveRESTClient() (*gitlabapi.Client, error) {
 	}
 	gitlabRESTClient = c
 	return gitlabRESTClient, nil
+}
+
+func hasCachedRESTClient() bool {
+	gitlabRESTClientMu.Lock()
+	defer gitlabRESTClientMu.Unlock()
+	return gitlabRESTClient != nil
 }
 
 // FindPipelineForMR returns the merge request's most recent pipeline (the
@@ -1114,14 +1137,15 @@ func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
 // the guard resolveGraphQLClient/cmd/root.go already apply — otherwise every
 // merge request fetch during local mock development or a GitHub-only setup
 // mid-migration would fire an unsolicited request against the GitLab host
-// and log a misleading warning. The gitlabRESTClient==nil check keeps this
-// from short-circuiting tests (or any future caller) that inject a client
-// via SetRESTClient without going through LoadAuthConfig at all.
+// and log a misleading warning. The hasCachedRESTClient() check (a
+// synchronized read of gitlabRESTClient) keeps this from short-circuiting
+// tests (or any future caller) that inject a client via SetRESTClient
+// without going through LoadAuthConfig at all.
 func fetchPipelineBestEffort(fullPath, iid string) MergeRequestPipeline {
 	if config.IsFeatureEnabled(config.FF_MOCK_DATA) {
 		return MergeRequestPipeline{}
 	}
-	if gitlabRESTClient == nil {
+	if !hasCachedRESTClient() {
 		if auth, err := gitlab.LoadAuthConfig(); err != nil || auth.Token == "" {
 			return MergeRequestPipeline{}
 		}

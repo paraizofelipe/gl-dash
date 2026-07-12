@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -89,6 +90,49 @@ func TestSetClient(t *testing.T) {
 		require.Nil(t, client)
 		require.True(t, IsEnrichmentCacheCleared())
 	})
+}
+
+func withFeatureFlagDisabled(t *testing.T, name string) {
+	t.Helper()
+	original, wasSet := os.LookupEnv(name)
+	require.NoError(t, os.Unsetenv(name))
+	t.Cleanup(func() {
+		if wasSet {
+			require.NoError(t, os.Setenv(name, original))
+		}
+	})
+}
+
+func TestResolveGraphQLClient_ConcurrentAccess(t *testing.T) {
+	defer SetClient(nil)
+	defer gitlab.SetClients(nil, nil)
+	withFeatureFlagDisabled(t, config.FF_MOCK_DATA)
+	SetClient(nil)
+
+	mockGQL := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, `{"data":{}}`))
+	gitlab.SetClients(nil, mockGQL)
+
+	const n = 50
+	var wg sync.WaitGroup
+	results := make([]*graphql.Client, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i], errs[i] = resolveGraphQLClient()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := range n {
+		require.NoError(t, errs[i])
+		require.NotNil(t, results[i])
+		require.Same(t, mockGQL, results[i])
+	}
 }
 
 const singleMergeRequestProjectScopedResponse = `{"data":{"project":{"mergeRequests":{"nodes":[{
@@ -1695,6 +1739,37 @@ func TestResolveRESTClient(t *testing.T) {
 			require.Same(t, first, second)
 		},
 	)
+}
+
+func TestResolveRESTClient_ConcurrentAccess(t *testing.T) {
+	defer SetRESTClient(nil)
+	defer gitlab.SetClients(nil, nil)
+	SetRESTClient(nil)
+
+	mockRest := newMockRESTClient(t, staticJSONHandler(http.StatusOK, `[]`))
+	gitlab.SetClients(mockRest, nil)
+
+	const n = 50
+	var wg sync.WaitGroup
+	results := make([]*gitlabapi.Client, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i], errs[i] = resolveRESTClient()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := range n {
+		require.NoError(t, errs[i])
+		require.NotNil(t, results[i])
+		require.Same(t, mockRest, results[i])
+	}
 }
 
 func TestFindPipelineForMR(t *testing.T) {

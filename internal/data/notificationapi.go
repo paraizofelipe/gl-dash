@@ -3,6 +3,7 @@ package data
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/log/v2"
@@ -33,7 +34,10 @@ const (
 	ReasonSecurityAlert   = "security_alert"
 )
 
-var restClient *gh.RESTClient
+var (
+	restClient   *gh.RESTClient
+	restClientMu sync.Mutex
+)
 
 type NotificationSubject struct {
 	Title            string `json:"title"`
@@ -101,12 +105,17 @@ type NotificationsResponse struct {
 }
 
 func getRESTClient() (*gh.RESTClient, error) {
+	restClientMu.Lock()
+	defer restClientMu.Unlock()
 	if restClient != nil {
 		return restClient, nil
 	}
-	var err error
-	restClient, err = gh.DefaultRESTClient()
-	return restClient, err
+	c, err := gh.DefaultRESTClient()
+	if err != nil {
+		return nil, err
+	}
+	restClient = c
+	return restClient, nil
 }
 
 // NotificationReadState represents the read state filter for notifications

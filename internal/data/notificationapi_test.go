@@ -1,8 +1,13 @@
 package data
 
 import (
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+
+	gh "github.com/cli/go-gh/v2/pkg/api"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFindBestWorkflowRunMatch(t *testing.T) {
@@ -244,5 +249,47 @@ func TestNotificationDataGetUrl(t *testing.T) {
 				t.Errorf("GetUrl() = %q, want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+func isolateGitHubAuthEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_ENTERPRISE_TOKEN", "")
+	t.Setenv("GITHUB_ENTERPRISE_TOKEN", "")
+	t.Setenv("GH_HOST", "")
+	t.Setenv("GH_PATH", filepath.Join(t.TempDir(), "gh-binary-not-found"))
+}
+
+func TestGetRESTClient_ConcurrentAccess(t *testing.T) {
+	original := restClient
+	defer func() { restClient = original }()
+	restClient = nil
+
+	isolateGitHubAuthEnv(t)
+
+	const n = 50
+	var wg sync.WaitGroup
+	results := make([]*gh.RESTClient, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i], errs[i] = getRESTClient()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := range n {
+		require.Equal(t, errs[0] == nil, errs[i] == nil)
+		if errs[0] == nil {
+			require.Same(t, results[0], results[i])
+		}
 	}
 }
