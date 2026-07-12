@@ -6,9 +6,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/utils"
-	checks "github.com/dlvhdr/x/gh-checks"
 )
 
 func (m *Model) renderCommits() string {
@@ -27,7 +27,8 @@ func (m *Model) renderCommits() string {
 
 	commits := m.pr.Data.Enriched.AllCommits.Nodes
 	heading := m.ctx.Styles.Common.MainTextStyle.MarginBottom(1).Underline(true).Render(
-		fmt.Sprintf("%s  %d commits", constants.CommitIcon, len(commits)))
+		fmt.Sprintf("%s  %d commits", constants.CommitIcon, len(commits)),
+	)
 
 	rendered := make([]string, len(commits))
 	for i, commit := range commits {
@@ -52,18 +53,22 @@ func (m *Model) renderCommits() string {
 		statsStr := ""
 		if commit.StatusCheckRollup.Contexts.TotalCount > 0 {
 			stats := m.getStatusCheckRollupStats(commit.StatusCheckRollup)
-			statsStr = lipgloss.JoinHorizontal(lipgloss.Top,
+			statsStr = lipgloss.JoinHorizontal(
+				lipgloss.Top,
 				" ",
 				faint.Render(constants.SmallDotIcon),
 				" ",
-				m.commitStateSign(commit.StatusCheckRollup.State),
+				m.commitStateSign(
+					data.PipelineStatus(strings.ToLower(string(commit.StatusCheckRollup.State))),
+				),
 				" ",
 				faint.Render(fmt.Sprintf("%d/%d", stats.succeeded,
 					commit.StatusCheckRollup.Contexts.TotalCount)),
 			)
 		}
 
-		desc := lipgloss.JoinHorizontal(lipgloss.Top,
+		desc := lipgloss.JoinHorizontal(
+			lipgloss.Top,
 			fainter.Render("│ "),
 			faint.Render(fmt.Sprintf("@%s", name)),
 			faint.Render(" committed "),
@@ -85,13 +90,14 @@ func (m *Model) renderCommits() string {
 	return res
 }
 
-func (m *Model) commitStateSign(state checks.CommitState) string {
-	switch state {
-	case checks.CommitStateError, checks.CommitStateFailure:
+func (m *Model) commitStateSign(state data.PipelineStatus) string {
+	status := string(state)
+	switch {
+	case data.IsFailure(status):
 		return m.ctx.Styles.Common.FailureGlyph
-	case checks.CommitStatePending, checks.CommitStateExpected, checks.CommitStateUnknown:
+	case data.IsPending(status):
 		return m.ctx.Styles.Common.WaitingGlyph
-	case checks.CommitStateSuccess:
+	case data.IsSuccess(status):
 		return m.ctx.Styles.Common.SuccessGlyph
 	}
 

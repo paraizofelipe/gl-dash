@@ -7,33 +7,70 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	graphql "github.com/cli/shurcooL-graphql"
-	checks "github.com/dlvhdr/x/gh-checks"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/table"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
+
+func newLastCommitStatus(state string) data.LastCommitStatus {
+	return data.LastCommitStatus{
+		Nodes: []struct {
+			Commit struct {
+				StatusCheckRollup struct {
+					State graphql.String
+				}
+			}
+		}{
+			{
+				Commit: struct {
+					StatusCheckRollup struct {
+						State graphql.String
+					}
+				}{
+					StatusCheckRollup: struct {
+						State graphql.String
+					}{
+						State: graphql.String(state),
+					},
+				},
+			},
+		},
+	}
+}
+
+func newPullRequestWithCommitState(ctx *context.ProgramContext, state string) *PullRequest {
+	return &PullRequest{
+		Ctx: ctx,
+		Data: &Data{
+			Primary: &data.PullRequestData{
+				Commits: newLastCommitStatus(state),
+			},
+		},
+	}
+}
 
 func TestGetStatusChecksRollup(t *testing.T) {
 	tests := []struct {
 		name     string
 		pr       *PullRequest
-		expected checks.CommitState
+		expected data.PipelineStatus
 	}{
 		{
-			name:     "nil Data returns Unknown",
+			name:     "nil Data returns empty status",
 			pr:       &PullRequest{Data: nil},
-			expected: checks.CommitStateUnknown,
+			expected: "",
 		},
 		{
-			name:     "nil Primary returns Unknown",
+			name:     "nil Primary returns empty status",
 			pr:       &PullRequest{Data: &Data{Primary: nil}},
-			expected: checks.CommitStateUnknown,
+			expected: "",
 		},
 		{
-			name: "empty Commits returns Unknown",
+			name: "empty Commits returns empty status",
 			pr: &PullRequest{
 				Data: &Data{
 					Primary: &data.PullRequestData{
@@ -49,73 +86,17 @@ func TestGetStatusChecksRollup(t *testing.T) {
 					},
 				},
 			},
-			expected: checks.CommitStateUnknown,
+			expected: "",
 		},
 		{
-			name: "SUCCESS state returns Success",
-			pr: &PullRequest{
-				Data: &Data{
-					Primary: &data.PullRequestData{
-						Commits: data.LastCommitStatus{
-							Nodes: []struct {
-								Commit struct {
-									StatusCheckRollup struct {
-										State graphql.String
-									}
-								}
-							}{
-								{
-									Commit: struct {
-										StatusCheckRollup struct {
-											State graphql.String
-										}
-									}{
-										StatusCheckRollup: struct {
-											State graphql.String
-										}{
-											State: "SUCCESS",
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			expected: checks.CommitStateSuccess,
+			name:     "lowercase success state returns success",
+			pr:       newPullRequestWithCommitState(nil, "success"),
+			expected: data.PipelineStatus("success"),
 		},
 		{
-			name: "FAILURE state returns Failure",
-			pr: &PullRequest{
-				Data: &Data{
-					Primary: &data.PullRequestData{
-						Commits: data.LastCommitStatus{
-							Nodes: []struct {
-								Commit struct {
-									StatusCheckRollup struct {
-										State graphql.String
-									}
-								}
-							}{
-								{
-									Commit: struct {
-										StatusCheckRollup struct {
-											State graphql.String
-										}
-									}{
-										StatusCheckRollup: struct {
-											State graphql.String
-										}{
-											State: "FAILURE",
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			expected: checks.CommitStateFailure,
+			name:     "lowercase failed state returns failed",
+			pr:       newPullRequestWithCommitState(nil, "failed"),
+			expected: data.PipelineStatus("failed"),
 		},
 	}
 
@@ -124,6 +105,78 @@ func TestGetStatusChecksRollup(t *testing.T) {
 			result := tt.pr.GetStatusChecksRollup()
 			if result != tt.expected {
 				t.Errorf("GetStatusChecksRollup() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRenderCiStatus(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../../../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thm := theme.ParseTheme(&cfg)
+	ctx := &context.ProgramContext{
+		Config: &cfg,
+		Theme:  thm,
+		Styles: context.InitStyles(thm),
+	}
+
+	tests := []struct {
+		name         string
+		pr           *PullRequest
+		wantContains string
+	}{
+		{
+			name:         "nil Primary renders placeholder dash",
+			pr:           &PullRequest{Ctx: ctx, Data: &Data{Primary: nil}},
+			wantContains: "-",
+		},
+		{
+			name:         "lowercase success state renders success icon",
+			pr:           newPullRequestWithCommitState(ctx, "success"),
+			wantContains: constants.SuccessIcon,
+		},
+		{
+			name:         "lowercase pending state renders waiting glyph",
+			pr:           newPullRequestWithCommitState(ctx, "pending"),
+			wantContains: ctx.Styles.Common.WaitingGlyph,
+		},
+		{
+			name:         "lowercase running state renders waiting glyph",
+			pr:           newPullRequestWithCommitState(ctx, "running"),
+			wantContains: ctx.Styles.Common.WaitingGlyph,
+		},
+		{
+			name:         "lowercase failed state renders failure icon",
+			pr:           newPullRequestWithCommitState(ctx, "failed"),
+			wantContains: constants.FailureIcon,
+		},
+		{
+			name:         "empty state renders empty icon",
+			pr:           newPullRequestWithCommitState(ctx, ""),
+			wantContains: constants.EmptyIcon,
+		},
+		{
+			name:         "skipped state renders empty icon",
+			pr:           newPullRequestWithCommitState(ctx, "skipped"),
+			wantContains: constants.EmptyIcon,
+		},
+		{
+			name:         "manual state renders empty icon",
+			pr:           newPullRequestWithCommitState(ctx, "manual"),
+			wantContains: constants.EmptyIcon,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.pr.renderCiStatus()
+			if !strings.Contains(result, tt.wantContains) {
+				t.Errorf("renderCiStatus() = %q, want substring %q", result, tt.wantContains)
 			}
 		})
 	}

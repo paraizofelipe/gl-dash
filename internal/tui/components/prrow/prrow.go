@@ -6,8 +6,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
-	checks "github.com/dlvhdr/x/gh-checks"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/git"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/common"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components"
@@ -39,7 +39,8 @@ func (pr *PullRequest) renderNumComments() string {
 		fmt.Sprintf(
 			"%d",
 			pr.Data.Primary.Comments.TotalCount+pr.Data.Primary.ReviewThreads.TotalCount,
-		))
+		),
+	)
 }
 
 func (pr *PullRequest) renderReviewStatus() string {
@@ -97,16 +98,16 @@ func (pr *PullRequest) renderState() string {
 	}
 }
 
-func (pr *PullRequest) GetStatusChecksRollup() checks.CommitState {
+func (pr *PullRequest) GetStatusChecksRollup() data.PipelineStatus {
 	if pr.Data == nil || pr.Data.Primary == nil {
-		return checks.CommitStateUnknown
+		return ""
 	}
 	commits := pr.Data.Primary.Commits.Nodes
 	if len(commits) == 0 {
-		return checks.CommitStateUnknown
+		return ""
 	}
 
-	return checks.CommitState(commits[0].Commit.StatusCheckRollup.State)
+	return data.PipelineStatus(commits[0].Commit.StatusCheckRollup.State)
 }
 
 func (pr *PullRequest) renderCiStatus() string {
@@ -114,16 +115,16 @@ func (pr *PullRequest) renderCiStatus() string {
 		return "-"
 	}
 
-	accStatus := pr.GetStatusChecksRollup()
+	accStatus := string(pr.GetStatusChecksRollup())
 	ciCellStyle := pr.getTextStyle()
 
-	switch accStatus {
-	case checks.CommitStateSuccess:
+	switch {
+	case data.IsSuccess(accStatus):
 		ciCellStyle = ciCellStyle.Foreground(pr.Ctx.Theme.SuccessText)
 		return ciCellStyle.Render(constants.SuccessIcon)
-	case checks.CommitStateExpected, checks.CommitStatePending:
+	case data.IsPending(accStatus):
 		return ciCellStyle.Render(pr.Ctx.Styles.Common.WaitingGlyph)
-	case checks.CommitStateError, checks.CommitStateFailure:
+	case data.IsFailure(accStatus):
 		ciCellStyle = ciCellStyle.Foreground(pr.Ctx.Theme.ErrorText)
 		return ciCellStyle.Render(constants.FailureIcon)
 	default:
@@ -161,7 +162,8 @@ func (pr *PullRequest) RenderLines(isSelected bool) string {
 				additionsText,
 				baseStyle.Render(" "),
 				deletionsText,
-			)),
+			),
+		),
 	)
 }
 
@@ -216,7 +218,8 @@ func (pr *PullRequest) renderExtendedTitle(isSelected bool) string {
 		MaxHeight(1).
 		Render(top)
 	title = baseStyle.Foreground(pr.Ctx.Theme.PrimaryText).Bold(true).Width(width).MaxWidth(
-		width).Height(1).MaxHeight(1).Render(title)
+		width,
+	).Height(1).MaxHeight(1).Render(title)
 
 	return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left, top, title))
 }

@@ -155,6 +155,12 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			cmd = m.watchChecks()
 		}
 
+	case watchPipelineTickMsg:
+		cmd = m.onWatchPipelineTickMsg(msg)
+
+	case watchPipelineResultMsg:
+		cmd = m.onWatchPipelineResultMsg(msg)
+
 	case tasks.UpdatePRMsg:
 		for i, currPr := range m.Prs {
 			if currPr.Primary.Number != msg.PrNumber {
@@ -170,15 +176,18 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			}
 			if msg.NewComment != nil {
 				currPr.Enriched.Comments.Nodes = append(
-					currPr.Enriched.Comments.Nodes, *msg.NewComment)
+					currPr.Enriched.Comments.Nodes, *msg.NewComment,
+				)
 			}
 			if msg.AddedAssignees != nil {
 				currPr.Primary.Assignees.Nodes = addAssignees(
-					currPr.Primary.Assignees.Nodes, msg.AddedAssignees.Nodes)
+					currPr.Primary.Assignees.Nodes, msg.AddedAssignees.Nodes,
+				)
 			}
 			if msg.RemovedAssignees != nil {
 				currPr.Primary.Assignees.Nodes = removeAssignees(
-					currPr.Primary.Assignees.Nodes, msg.RemovedAssignees.Nodes)
+					currPr.Primary.Assignees.Nodes, msg.RemovedAssignees.Nodes,
+				)
 			}
 			if msg.Labels != nil {
 				currPr.Primary.Labels.Nodes = msg.Labels.Nodes
@@ -549,7 +558,8 @@ func FetchAllSections(
 		sections = append(sections, &sectionModel)
 		fetchPRsCmds = append(
 			fetchPRsCmds,
-			sectionModel.FetchNextPageSectionRows()...)
+			sectionModel.FetchNextPageSectionRows()...,
+		)
 	}
 	return sections, tea.Batch(fetchPRsCmds...)
 }

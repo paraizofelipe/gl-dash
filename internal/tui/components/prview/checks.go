@@ -9,7 +9,6 @@ import (
 
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/keys"
-	ghchecks "github.com/dlvhdr/x/gh-checks"
 )
 
 type checkSectionStatus int
@@ -107,7 +106,8 @@ func (m *Model) viewChecksStatus() (string, checkSectionStatus) {
 			fmt.Sprintf(
 				"%d awaiting approval. Press %s to run.",
 				stats.awaitingApproval,
-				m.ctx.Styles.KeyHint.Render(keys.PRKeys.ApproveWorkflows.Keys()[0])),
+				m.ctx.Styles.KeyHint.Render(keys.PRKeys.ApproveWorkflows.Keys()[0]),
+			),
 		)
 	}
 	if stats.inProgress > 0 {
@@ -319,45 +319,45 @@ func (m *Model) viewChecksBar() string {
 	if stats.failed > 0 {
 		failWidth := int(math.Floor((float64(stats.failed) / total) * float64(w)))
 		sections = append(sections, lipgloss.NewStyle().Width(failWidth).Foreground(
-			m.ctx.Theme.ErrorText).Height(1).Render(strings.Repeat("▃", failWidth)))
+			m.ctx.Theme.ErrorText,
+		).Height(1).Render(strings.Repeat("▃", failWidth)))
 	}
 	if stats.awaitingApproval > 0 {
 		awWidth := int(math.Floor((float64(stats.awaitingApproval) / total) * float64(w)))
 		sections = append(sections, lipgloss.NewStyle().Width(awWidth).Foreground(
-			m.ctx.Theme.WarningText).Height(1).Render(strings.Repeat("▃", awWidth)))
+			m.ctx.Theme.WarningText,
+		).Height(1).Render(strings.Repeat("▃", awWidth)))
 	}
 	if stats.inProgress > 0 {
 		ipWidth := int(math.Floor((float64(stats.inProgress) / total) * float64(w)))
 		sections = append(sections, lipgloss.NewStyle().Width(ipWidth).Foreground(
-			m.ctx.Theme.WarningText).Height(1).Render(strings.Repeat("▃", ipWidth)))
+			m.ctx.Theme.WarningText,
+		).Height(1).Render(strings.Repeat("▃", ipWidth)))
 	}
 	if stats.skipped > 0 || stats.neutral > 0 {
 		skipWidth := int(math.Floor((float64(stats.skipped+stats.neutral) / total) * float64(w)))
 		sections = append(sections, lipgloss.NewStyle().Width(skipWidth).Foreground(
-			m.ctx.Theme.FaintText).Height(1).Render(strings.Repeat("▃", skipWidth)))
+			m.ctx.Theme.FaintText,
+		).Height(1).Render(strings.Repeat("▃", skipWidth)))
 	}
 	if stats.succeeded > 0 {
 		succWidth := int(math.Floor((float64(stats.succeeded) / total) * float64(w)))
 		sections = append(sections, lipgloss.NewStyle().Width(succWidth).Foreground(
-			m.ctx.Theme.SuccessText).Height(1).Render(strings.Repeat("▃", succWidth)))
+			m.ctx.Theme.SuccessText,
+		).Height(1).Render(strings.Repeat("▃", succWidth)))
 	}
 
 	return strings.Join(sections, " ")
 }
 
-func renderCheckRunName(checkRun data.CheckRun) string {
+func renderJobName(job data.PipelineJob) string {
 	var parts []string
-	creator := strings.TrimSpace(string(checkRun.CheckSuite.Creator.Login))
-	if creator != "" {
-		parts = append(parts, creator)
+	stage := strings.TrimSpace(job.Stage)
+	if stage != "" {
+		parts = append(parts, stage)
 	}
 
-	workflow := strings.TrimSpace(string(checkRun.CheckSuite.WorkflowRun.Workflow.Name))
-	if workflow != "" {
-		parts = append(parts, workflow)
-	}
-
-	name := strings.TrimSpace(string(checkRun.Name))
+	name := strings.TrimSpace(job.Name)
 	if name != "" {
 		parts = append(parts, name)
 	}
@@ -376,48 +376,17 @@ const (
 	CheckSuccess
 )
 
-func (m *Model) renderCheckRunConclusion(checkRun data.CheckRun) (CheckCategory, string) {
-	if ghchecks.IsStatusWaiting(string(checkRun.Status)) {
+func (m *Model) renderJobConclusion(job data.PipelineJob) (CheckCategory, string) {
+	status := string(job.Status)
+	if data.IsPending(status) || data.IsManual(status) {
 		return CheckWaiting, m.ctx.Styles.Common.WaitingGlyph
 	}
 
-	if ghchecks.IsConclusionAFailure(string(checkRun.Conclusion)) {
+	if data.IsFailure(status) {
 		return CheckFailure, m.ctx.Styles.Common.FailureGlyph
 	}
 
 	return CheckSuccess, m.ctx.Styles.Common.SuccessGlyph
-}
-
-func (m *Model) renderStatusContextConclusion(
-	statusContext data.StatusContext,
-) (CheckCategory, string) {
-	conclusionStr := string(statusContext.State)
-	if ghchecks.IsStatusWaiting(conclusionStr) {
-		return CheckWaiting, m.ctx.Styles.Common.WaitingGlyph
-	}
-
-	if ghchecks.IsConclusionAFailure(conclusionStr) {
-		return CheckFailure, m.ctx.Styles.Common.FailureGlyph
-	}
-
-	return CheckSuccess, m.ctx.Styles.Common.SuccessGlyph
-}
-
-func renderStatusContextName(statusContext data.StatusContext) string {
-	var parts []string
-	creator := strings.TrimSpace(string(statusContext.Creator.Login))
-	if creator != "" {
-		parts = append(parts, creator)
-	}
-
-	context := strings.TrimSpace(string(statusContext.Context))
-	if context != "" && context != "/" {
-		parts = append(parts, context)
-	}
-	return lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		strings.Join(parts, "/"),
-	)
 }
 
 func (sidebar *Model) renderChecks() string {
@@ -425,8 +394,7 @@ func (sidebar *Model) renderChecks() string {
 		Underline(true).
 		Render(" All Checks")
 
-	commits := sidebar.pr.Data.Enriched.Commits.Nodes
-	if len(commits) == 0 {
+	if !sidebar.pr.Data.IsEnriched {
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
 			title,
@@ -434,104 +402,8 @@ func (sidebar *Model) renderChecks() string {
 		)
 	}
 
-	failures := make([]string, 0)
-	waiting := make([]string, 0)
-	rest := make([]string, 0)
-	awaitingApproval := make([]string, 0)
-	pending := make([]string, 0)
-
-	lastCommit := commits[0]
-
-	// Collect check suites that don't appear in statusCheckRollup
-	for _, suite := range lastCommit.Commit.CheckSuites.Nodes {
-		workflowName := strings.TrimSpace(string(suite.WorkflowRun.Workflow.Name))
-		if workflowName == "" {
-			workflowName = strings.TrimSpace(string(suite.App.Name))
-		}
-		if workflowName == "" {
-			workflowName = "Workflow"
-		}
-
-		if suite.Conclusion == "ACTION_REQUIRED" {
-			// Workflow requires approval before it can run
-			check := lipgloss.JoinHorizontal(
-				lipgloss.Top,
-				sidebar.ctx.Styles.Common.ActionRequiredGlyph,
-				" ",
-				workflowName,
-			)
-			awaitingApproval = append(awaitingApproval, check)
-		} else if suite.Status == "QUEUED" || suite.Status == "PENDING" || suite.Status == "WAITING" {
-			// Workflow is queued/pending (will run automatically)
-			check := lipgloss.JoinHorizontal(
-				lipgloss.Top,
-				sidebar.ctx.Styles.Common.WaitingGlyph,
-				" ",
-				workflowName,
-			)
-			pending = append(pending, check)
-		}
-	}
-
-	// Build a set of reported check names to compare against required checks
-	reportedChecks := make(map[string]bool)
-
-	for _, node := range lastCommit.Commit.StatusCheckRollup.Contexts.Nodes {
-		var category CheckCategory
-		var check string
-		var checkName string
-		switch node.Typename {
-		case "CheckRun":
-			checkRun := node.CheckRun
-			var renderedStatus string
-			category, renderedStatus = sidebar.renderCheckRunConclusion(checkRun)
-			checkName = string(checkRun.Name)
-			name := renderCheckRunName(checkRun)
-			check = lipgloss.JoinHorizontal(lipgloss.Top, renderedStatus, " ", name)
-		case "StatusContext":
-			statusContext := node.StatusContext
-			var status string
-			category, status = sidebar.renderStatusContextConclusion(statusContext)
-			checkName = string(statusContext.Context)
-			check = lipgloss.JoinHorizontal(
-				lipgloss.Top,
-				status,
-				" ",
-				renderStatusContextName(statusContext),
-			)
-		}
-
-		reportedChecks[checkName] = true
-
-		switch category {
-		case CheckWaiting:
-			waiting = append(waiting, check)
-		case CheckFailure:
-			failures = append(failures, check)
-		default:
-			rest = append(rest, check)
-		}
-	}
-
-	// Check for required status checks that haven't been reported yet
-	branchRules := sidebar.pr.Data.Primary.Repository.BranchProtectionRules.Nodes
-	if len(branchRules) > 0 {
-		for _, requiredContext := range branchRules[0].RequiredStatusCheckContexts {
-			contextName := string(requiredContext)
-			if !reportedChecks[contextName] {
-				// Required check hasn't been reported yet
-				check := lipgloss.JoinHorizontal(
-					lipgloss.Top,
-					sidebar.ctx.Styles.Common.WaitingGlyph,
-					" ",
-					contextName,
-				)
-				pending = append(pending, check)
-			}
-		}
-	}
-
-	if len(awaitingApproval)+len(pending)+len(waiting)+len(failures)+len(rest) == 0 {
+	jobs := sidebar.pr.Data.Enriched.Pipeline.Jobs
+	if len(jobs) == 0 {
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
 			title,
@@ -543,9 +415,41 @@ func (sidebar *Model) renderChecks() string {
 		)
 	}
 
+	failures := make([]string, 0)
+	waiting := make([]string, 0)
+	rest := make([]string, 0)
+	awaitingApproval := make([]string, 0)
+
+	for _, job := range jobs {
+		name := renderJobName(job)
+
+		if data.IsManual(string(job.Status)) {
+			check := lipgloss.JoinHorizontal(
+				lipgloss.Top,
+				sidebar.ctx.Styles.Common.ActionRequiredGlyph,
+				" ",
+				name,
+			)
+			awaitingApproval = append(awaitingApproval, check)
+			continue
+		}
+
+		category, renderedStatus := sidebar.renderJobConclusion(job)
+		check := lipgloss.JoinHorizontal(lipgloss.Top, renderedStatus, " ", name)
+
+		switch category {
+		case CheckWaiting:
+			waiting = append(waiting, check)
+		case CheckFailure:
+			failures = append(failures, check)
+		default:
+			rest = append(rest, check)
+		}
+	}
+
 	parts := make([]string, 0)
 
-	// Show awaiting approval workflows first
+	// Show awaiting approval jobs first
 	if len(awaitingApproval) > 0 {
 		sectionHeader := lipgloss.NewStyle().
 			Bold(true).
@@ -553,17 +457,6 @@ func (sidebar *Model) renderChecks() string {
 			Render(fmt.Sprintf("Awaiting Approval (%d)", len(awaitingApproval)))
 		parts = append(parts, sectionHeader)
 		parts = append(parts, awaitingApproval...)
-		parts = append(parts, "") // spacing
-	}
-
-	// Show pending workflows
-	if len(pending) > 0 {
-		sectionHeader := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(sidebar.ctx.Theme.WarningText).
-			Render(fmt.Sprintf("Pending (%d)", len(pending)))
-		parts = append(parts, sectionHeader)
-		parts = append(parts, pending...)
 		parts = append(parts, "") // spacing
 	}
 
@@ -575,7 +468,8 @@ func (sidebar *Model) renderChecks() string {
 		lipgloss.Left,
 		title,
 		lipgloss.NewStyle().PaddingLeft(2).Width(sidebar.getIndentedContentWidth()).Render(
-			lipgloss.JoinVertical(lipgloss.Left, parts...)),
+			lipgloss.JoinVertical(lipgloss.Left, parts...),
+		),
 	)
 }
 
@@ -595,16 +489,17 @@ func (m *Model) getStatusCheckRollupStats(rollup data.StatusCheckRollupStats) ch
 	allChecks = append(allChecks, rollup.Contexts.StatusContextCountsByState...)
 
 	for _, count := range allChecks {
-		state := string(count.State)
-		if ghchecks.IsStatusWaiting(state) {
+		state := strings.ToLower(string(count.State))
+		switch {
+		case data.IsPending(state):
 			res.inProgress += int(count.Count)
-		} else if ghchecks.IsConclusionAFailure(state) {
+		case data.IsFailure(state):
 			res.failed += int(count.Count)
-		} else if ghchecks.IsConclusionASkip(state) {
+		case data.IsSkipped(state):
 			res.skipped += int(count.Count)
-		} else if ghchecks.IsConclusionNeutral(state) {
+		case data.IsNeutral(state):
 			res.neutral += int(count.Count)
-		} else if ghchecks.IsConclusionASuccess(state) {
+		case data.IsSuccess(state):
 			res.succeeded += int(count.Count)
 		}
 	}
@@ -614,41 +509,21 @@ func (m *Model) getStatusCheckRollupStats(rollup data.StatusCheckRollupStats) ch
 
 func (m *Model) getChecksStats() checksStats {
 	var res checksStats
-	commits := m.pr.Data.Enriched.Commits.Nodes
-	if len(commits) == 0 {
-		return res
-	}
-
-	lastCommit := commits[0]
-	allChecks := make([]data.ContextCountByState, 0)
-	allChecks = append(
-		allChecks,
-		lastCommit.Commit.StatusCheckRollup.Contexts.CheckRunCountsByState...)
-	allChecks = append(
-		allChecks,
-		lastCommit.Commit.StatusCheckRollup.Contexts.StatusContextCountsByState...)
-
-	for _, count := range allChecks {
-		state := string(count.State)
-		if ghchecks.IsStatusWaiting(state) {
-			res.inProgress += int(count.Count)
-		} else if ghchecks.IsConclusionAFailure(state) {
-			res.failed += int(count.Count)
-		} else if ghchecks.IsConclusionASkip(state) {
-			res.skipped += int(count.Count)
-		} else if ghchecks.IsConclusionNeutral(state) {
-			res.neutral += int(count.Count)
-		} else if ghchecks.IsConclusionASuccess(state) {
-			res.succeeded += int(count.Count)
-		}
-	}
-
-	// Count check suites that don't appear in statusCheckRollup
-	for _, suite := range lastCommit.Commit.CheckSuites.Nodes {
-		if suite.Conclusion == "ACTION_REQUIRED" {
+	for _, job := range m.pr.Data.Enriched.Pipeline.Jobs {
+		status := string(job.Status)
+		switch {
+		case data.IsManual(status):
 			res.awaitingApproval++
-		} else if suite.Status == "QUEUED" || suite.Status == "PENDING" || suite.Status == "WAITING" {
+		case data.IsPending(status):
 			res.inProgress++
+		case data.IsFailure(status):
+			res.failed++
+		case data.IsSkipped(status):
+			res.skipped++
+		case data.IsNeutral(status):
+			res.neutral++
+		case data.IsSuccess(status):
+			res.succeeded++
 		}
 	}
 

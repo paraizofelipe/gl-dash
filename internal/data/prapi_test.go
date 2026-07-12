@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -12,7 +13,9 @@ import (
 	graphql "github.com/cli/shurcooL-graphql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gitlabapi "gitlab.com/gitlab-org/api/client-go"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/gitlab"
 )
 
@@ -1265,6 +1268,7 @@ func TestParseMergeRequestUrl(t *testing.T) {
 func TestFetchPullRequest(t *testing.T) {
 	t.Run("maps a single merge request to EnrichedPullRequestData", func(t *testing.T) {
 		defer SetClient(nil)
+		defer SetRESTClient(nil)
 
 		responseBody := `{"data":{"project":{"mergeRequest":{
 			"iid":"42","title":"Fix bug","state":"opened","draft":false,
@@ -1279,6 +1283,7 @@ func TestFetchPullRequest(t *testing.T) {
 
 		mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
 		SetClient(mockClient)
+		SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
 
 		pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
 		require.NoError(t, err)
@@ -1314,6 +1319,7 @@ func TestFetchPullRequest(t *testing.T) {
 
 	t.Run("populates body from description and assignees from the response", func(t *testing.T) {
 		defer SetClient(nil)
+		defer SetRESTClient(nil)
 
 		responseBody := `{"data":{"project":{"mergeRequest":{
 			"iid":"42","title":"Fix bug","state":"opened","draft":false,
@@ -1330,6 +1336,7 @@ func TestFetchPullRequest(t *testing.T) {
 
 		mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
 		SetClient(mockClient)
+		SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
 
 		pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
 		require.NoError(t, err)
@@ -1368,6 +1375,7 @@ func TestFetchPullRequest(t *testing.T) {
 
 func TestFetchPullRequest_DeclaresFullPathAsGraphQLID(t *testing.T) {
 	defer SetClient(nil)
+	defer SetRESTClient(nil)
 
 	responseBody := `{"data":{"project":{"mergeRequest":{
 		"iid":"42","title":"Fix bug","state":"opened","draft":false,
@@ -1395,6 +1403,7 @@ func TestFetchPullRequest_DeclaresFullPathAsGraphQLID(t *testing.T) {
 
 	mockClient := newMockGraphQLClient(t, handler)
 	SetClient(mockClient)
+	SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
 
 	_, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
 	require.NoError(t, err)
@@ -1411,4 +1420,758 @@ func TestFetchPullRequest_DeclaresFullPathAsGraphQLID(t *testing.T) {
 	)
 	assert.NotContains(t, capturedBody.Query, "$fullPath:String!")
 	assert.Equal(t, "group/proj", capturedBody.Variables["fullPath"])
+}
+
+func newMockRESTClient(t *testing.T, handler http.HandlerFunc) *gitlabapi.Client {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	c, err := gitlabapi.NewClient(
+		"test-token",
+		gitlabapi.WithBaseURL(server.URL),
+		gitlabapi.WithoutRetries(),
+	)
+	require.NoError(t, err)
+	return c
+}
+
+func isolateGitLabAuthEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GITLAB_TOKEN", "")
+	t.Setenv("GITLAB_HOST", "")
+	t.Setenv("CI_JOB_TOKEN", "")
+}
+
+func TestCountJobsByState(t *testing.T) {
+	t.Run("aggregates mixed job states preserving first occurrence order", func(t *testing.T) {
+		jobs := []PipelineJob{
+			{ID: 1, Status: StatusRunning},
+			{ID: 2, Status: StatusSuccess},
+			{ID: 3, Status: StatusRunning},
+			{ID: 4, Status: StatusFailed},
+			{ID: 5, Status: StatusRunning},
+			{ID: 6, Status: StatusSuccess},
+		}
+
+		got := CountJobsByState(jobs)
+
+		want := []JobCountByState{
+			{State: StatusRunning, Count: 3},
+			{State: StatusSuccess, Count: 2},
+			{State: StatusFailed, Count: 1},
+		}
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("nil slice returns an empty non-nil slice without panic", func(t *testing.T) {
+		var got []JobCountByState
+		require.NotPanics(t, func() {
+			got = CountJobsByState(nil)
+		})
+		assert.Equal(t, []JobCountByState{}, got)
+	})
+
+	t.Run("empty slice returns an empty non-nil slice without panic", func(t *testing.T) {
+		var got []JobCountByState
+		require.NotPanics(t, func() {
+			got = CountJobsByState([]PipelineJob{})
+		})
+		assert.Equal(t, []JobCountByState{}, got)
+	})
+
+	t.Run(
+		"all jobs in the same state collapse into a single entry with the total count",
+		func(t *testing.T) {
+			jobs := []PipelineJob{
+				{ID: 1, Status: StatusManual},
+				{ID: 2, Status: StatusManual},
+				{ID: 3, Status: StatusManual},
+			}
+
+			got := CountJobsByState(jobs)
+
+			require.Len(t, got, 1)
+			assert.Equal(t, JobCountByState{State: StatusManual, Count: 3}, got[0])
+		},
+	)
+}
+
+func TestFetchPullRequests_HeadPipelineStatusPopulatesCommitsStatusCheckRollupLowercased(
+	t *testing.T,
+) {
+	tests := []struct {
+		name              string
+		headPipelineField string
+		wantNodes         int
+		wantState         graphql.String
+	}{
+		{
+			name:              "uppercase SUCCESS head pipeline status is lowered to success",
+			headPipelineField: `{"status":"SUCCESS"}`,
+			wantNodes:         1,
+			wantState:         "success",
+		},
+		{
+			name:              "uppercase RUNNING head pipeline status is lowered to running",
+			headPipelineField: `{"status":"RUNNING"}`,
+			wantNodes:         1,
+			wantState:         "running",
+		},
+		{
+			name:              "null head pipeline leaves commits nodes empty",
+			headPipelineField: `null`,
+			wantNodes:         0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer SetClient(nil)
+
+			responseBody := fmt.Sprintf(`{"data":{"project":{"mergeRequests":{"nodes":[{
+				"iid":"1","title":"T","state":"opened","draft":false,
+				"author":{"username":"jdoe"},
+				"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+				"webUrl":"https://gitlab.com/group/proj/-/merge_requests/1",
+				"sourceBranch":"x","targetBranch":"main",
+				"detailedMergeStatus":"MERGEABLE","approved":true,
+				"diffStatsSummary":{"additions":0,"deletions":0},
+				"labels":{"nodes":[]},
+				"headPipeline":%s
+			}],"count":1,"pageInfo":{"hasNextPage":false,"startCursor":"","endCursor":""}}}}}`, tt.headPipelineField)
+
+			mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+			SetClient(mockClient)
+
+			var resp PullRequestsResponse
+			var err error
+			require.NotPanics(t, func() {
+				resp, err = FetchPullRequests("project:group/proj", 30, nil)
+			})
+			require.NoError(t, err)
+			require.Len(t, resp.Prs, 1)
+
+			require.Len(t, resp.Prs[0].Commits.Nodes, tt.wantNodes)
+			if tt.wantNodes > 0 {
+				assert.Equal(
+					t,
+					tt.wantState,
+					resp.Prs[0].Commits.Nodes[0].Commit.StatusCheckRollup.State,
+				)
+			}
+		})
+	}
+}
+
+func TestFetchPullRequests_QueriesHeadPipelineStatusOnMergeRequestNode(t *testing.T) {
+	defer SetClient(nil)
+
+	var capturedBody graphQLRequestBody
+	var mu sync.Mutex
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLRequestBody(t, r)
+		mu.Lock()
+		capturedBody = body
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(singleMergeRequestProjectScopedResponse))
+	}
+
+	mockClient := newMockGraphQLClient(t, handler)
+	SetClient(mockClient)
+
+	_, err := FetchPullRequests("project:group/proj", 30, nil)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, capturedBody.Query)
+	assert.Contains(t, capturedBody.Query, "headPipeline{status}")
+}
+
+func TestSetRESTClient(t *testing.T) {
+	originalRESTClient := gitlabRESTClient
+	defer func() { gitlabRESTClient = originalRESTClient }()
+
+	t.Run("sets the package level rest client and nil clears it", func(t *testing.T) {
+		mockClient, err := gitlabapi.NewClient(
+			"token",
+			gitlabapi.WithBaseURL("http://example.invalid"),
+		)
+		require.NoError(t, err)
+
+		SetRESTClient(mockClient)
+		require.Same(t, mockClient, gitlabRESTClient)
+
+		SetRESTClient(nil)
+		require.Nil(t, gitlabRESTClient)
+	})
+}
+
+func TestResolveRESTClient(t *testing.T) {
+	t.Run(
+		"returns the client already injected via SetRESTClient without falling back",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+
+			mockClient, err := gitlabapi.NewClient(
+				"token",
+				gitlabapi.WithBaseURL("http://example.invalid"),
+			)
+			require.NoError(t, err)
+			SetRESTClient(mockClient)
+
+			got, err := resolveRESTClient()
+			require.NoError(t, err)
+			require.Same(t, mockClient, got)
+		},
+	)
+
+	t.Run(
+		"falls back to internal/gitlab RESTClient and caches the resolved pointer",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+			defer gitlab.SetClients(nil, nil)
+
+			mockClient, err := gitlabapi.NewClient(
+				"token",
+				gitlabapi.WithBaseURL("http://example.invalid"),
+			)
+			require.NoError(t, err)
+			gitlab.SetClients(mockClient, nil)
+
+			first, err := resolveRESTClient()
+			require.NoError(t, err)
+			require.Same(t, mockClient, first)
+
+			second, err := resolveRESTClient()
+			require.NoError(t, err)
+			require.Same(t, first, second)
+		},
+	)
+}
+
+func TestFindPipelineForMR(t *testing.T) {
+	t.Run(
+		"selects the pipeline with the highest id when multiple pipelines are returned out of order",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+
+			mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Contains(t, r.URL.Path, "/merge_requests/5/pipelines")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[
+				{"id":10,"status":"success","web_url":"https://gitlab.example.com/group/proj/-/pipelines/10"},
+				{"id":30,"status":"running","web_url":"https://gitlab.example.com/group/proj/-/pipelines/30"},
+				{"id":20,"status":"failed","web_url":"https://gitlab.example.com/group/proj/-/pipelines/20"}
+			]`))
+			})
+			SetRESTClient(mockClient)
+
+			pipeline, err := FindPipelineForMR("group/proj", 5)
+			require.NoError(t, err)
+			assert.EqualValues(t, 30, pipeline.ID)
+			assert.Equal(t, StatusRunning, pipeline.Status)
+			assert.Equal(
+				t,
+				"https://gitlab.example.com/group/proj/-/pipelines/30",
+				pipeline.WebURL,
+			)
+			assert.Empty(t, pipeline.Jobs)
+		},
+	)
+
+	t.Run(
+		"returns a zero value pipeline without an error when the mr has no pipelines yet",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+
+			mockClient := newMockRESTClient(t, staticJSONHandler(http.StatusOK, `[]`))
+			SetRESTClient(mockClient)
+
+			pipeline, err := FindPipelineForMR("group/proj", 5)
+			require.NoError(t, err)
+			assert.Equal(t, MergeRequestPipeline{}, pipeline)
+		},
+	)
+
+	t.Run(
+		"propagates an error when the server responds with http 404 not found",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+
+			mockClient := newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, ""))
+			SetRESTClient(mockClient)
+
+			_, err := FindPipelineForMR("group/proj", 5)
+			require.Error(t, err)
+		},
+	)
+
+	t.Run(
+		"propagates an error when the server responds with http 500 internal server error",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+
+			mockClient := newMockRESTClient(
+				t,
+				staticJSONHandler(http.StatusInternalServerError, ""),
+			)
+			SetRESTClient(mockClient)
+
+			_, err := FindPipelineForMR("group/proj", 5)
+			require.Error(t, err)
+		},
+	)
+}
+
+func TestListPipelineJobs(t *testing.T) {
+	t.Run("converts every job field preserving the order returned by the api", func(t *testing.T) {
+		defer SetRESTClient(nil)
+
+		mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.Contains(t, r.URL.Path, "/pipelines/55/jobs")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[
+				{"id":100,"name":"build","stage":"build","status":"success","web_url":"https://gitlab.example.com/group/proj/-/jobs/100","allow_failure":false},
+				{"id":101,"name":"deploy","stage":"deploy","status":"manual","web_url":"https://gitlab.example.com/group/proj/-/jobs/101","allow_failure":true}
+			]`))
+		})
+		SetRESTClient(mockClient)
+
+		jobs, err := ListPipelineJobs("group/proj", 55, "")
+		require.NoError(t, err)
+		require.Len(t, jobs, 2)
+		assert.Equal(t, PipelineJob{
+			ID:           100,
+			Name:         "build",
+			Stage:        "build",
+			Status:       StatusSuccess,
+			WebURL:       "https://gitlab.example.com/group/proj/-/jobs/100",
+			AllowFailure: false,
+		}, jobs[0])
+		assert.Equal(t, PipelineJob{
+			ID:           101,
+			Name:         "deploy",
+			Stage:        "deploy",
+			Status:       StatusManual,
+			WebURL:       "https://gitlab.example.com/group/proj/-/jobs/101",
+			AllowFailure: true,
+		}, jobs[1])
+	})
+
+	t.Run("sends no scope query parameter when scope is empty", func(t *testing.T) {
+		defer SetRESTClient(nil)
+
+		var capturedRawQuery string
+		mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedRawQuery = r.URL.RawQuery
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+		SetRESTClient(mockClient)
+
+		_, err := ListPipelineJobs("group/proj", 55, "")
+		require.NoError(t, err)
+		assert.NotContains(t, capturedRawQuery, "scope")
+	})
+
+	t.Run("sends scope[]=manual query parameter when scope is manual", func(t *testing.T) {
+		defer SetRESTClient(nil)
+
+		var capturedScope []string
+		mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedScope = r.URL.Query()["scope[]"]
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+		SetRESTClient(mockClient)
+
+		_, err := ListPipelineJobs("group/proj", 55, "manual")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"manual"}, capturedScope)
+	})
+
+	t.Run("returns an empty slice without error when the pipeline has no jobs", func(t *testing.T) {
+		defer SetRESTClient(nil)
+
+		mockClient := newMockRESTClient(t, staticJSONHandler(http.StatusOK, `[]`))
+		SetRESTClient(mockClient)
+
+		jobs, err := ListPipelineJobs("group/proj", 55, "")
+		require.NoError(t, err)
+		assert.Empty(t, jobs)
+	})
+
+	t.Run("propagates an error when the server responds with http 500", func(t *testing.T) {
+		defer SetRESTClient(nil)
+
+		mockClient := newMockRESTClient(t, staticJSONHandler(http.StatusInternalServerError, ""))
+		SetRESTClient(mockClient)
+
+		_, err := ListPipelineJobs("group/proj", 55, "")
+		require.Error(t, err)
+	})
+}
+
+func TestPlayJob(t *testing.T) {
+	t.Run(
+		"returns nil and sends a post request to the jobs play endpoint when the server accepts it",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+
+			var gotMethod, gotPath string
+			mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				gotMethod = r.Method
+				gotPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"id":77,"name":"deploy","status":"pending"}`))
+			})
+			SetRESTClient(mockClient)
+
+			err := PlayJob("group/proj", 77)
+			require.NoError(t, err)
+			assert.Equal(t, http.MethodPost, gotMethod)
+			assert.Contains(t, gotPath, "/jobs/77/play")
+		},
+	)
+
+	t.Run(
+		"propagates an error when the server responds with http 403 forbidden",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+
+			mockClient := newMockRESTClient(t, staticJSONHandler(http.StatusForbidden, ""))
+			SetRESTClient(mockClient)
+
+			err := PlayJob("group/proj", 77)
+			require.Error(t, err)
+		},
+	)
+}
+
+const singleMergeRequestResponseForPipelineEnrichmentTests = `{"data":{"project":{"mergeRequest":{
+	"iid":"42","title":"Fix bug","state":"opened","draft":false,
+	"author":{"username":"jdoe"},
+	"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+	"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+	"sourceBranch":"feature-x","targetBranch":"main",
+	"detailedMergeStatus":"MERGEABLE","approved":true,
+	"diffStatsSummary":{"additions":10,"deletions":2},
+	"labels":{"nodes":[]}
+}}}}`
+
+func TestFetchPullRequest_PopulatesPipelineAndJobsFromRESTBestEffort(t *testing.T) {
+	t.Run(
+		"combines graphql mr data with rest pipeline and job data end to end",
+		func(t *testing.T) {
+			defer SetClient(nil)
+			defer SetRESTClient(nil)
+			isolateGitLabAuthEnv(t)
+			t.Setenv("GITLAB_TOKEN", "test-token")
+
+			graphqlClient := newMockGraphQLClient(
+				t,
+				staticJSONHandler(
+					http.StatusOK,
+					singleMergeRequestResponseForPipelineEnrichmentTests,
+				),
+			)
+			SetClient(graphqlClient)
+
+			var jobsRawQuery string
+			mockRest := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(r.URL.Path, "/merge_requests/42/pipelines"):
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write(
+						[]byte(
+							`[{"id":900,"status":"running","web_url":"https://gitlab.com/group/proj/-/pipelines/900"}]`,
+						),
+					)
+				case strings.Contains(r.URL.Path, "/pipelines/900/jobs"):
+					jobsRawQuery = r.URL.RawQuery
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`[
+					{"id":1,"name":"build","stage":"build","status":"success","web_url":"https://gitlab.com/group/proj/-/jobs/1","allow_failure":false},
+					{"id":2,"name":"test","stage":"test","status":"running","web_url":"https://gitlab.com/group/proj/-/jobs/2","allow_failure":false}
+				]`))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			SetRESTClient(mockRest)
+
+			pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+			require.NoError(t, err)
+
+			assert.Equal(t, int64(900), pr.Pipeline.ID)
+			assert.Equal(t, StatusRunning, pr.Pipeline.Status)
+			assert.Equal(t, "https://gitlab.com/group/proj/-/pipelines/900", pr.Pipeline.WebURL)
+			require.Len(t, pr.Pipeline.Jobs, 2)
+			assert.Equal(t, PipelineJob{
+				ID:           1,
+				Name:         "build",
+				Stage:        "build",
+				Status:       StatusSuccess,
+				WebURL:       "https://gitlab.com/group/proj/-/jobs/1",
+				AllowFailure: false,
+			}, pr.Pipeline.Jobs[0])
+			assert.Equal(t, PipelineJob{
+				ID:           2,
+				Name:         "test",
+				Stage:        "test",
+				Status:       StatusRunning,
+				WebURL:       "https://gitlab.com/group/proj/-/jobs/2",
+				AllowFailure: false,
+			}, pr.Pipeline.Jobs[1])
+
+			assert.NotContains(t, jobsRawQuery, "scope")
+		},
+	)
+
+	t.Run(
+		"keeps a zero value pipeline without fetching jobs when the mr has no pipeline yet",
+		func(t *testing.T) {
+			defer SetClient(nil)
+			defer SetRESTClient(nil)
+			isolateGitLabAuthEnv(t)
+			t.Setenv("GITLAB_TOKEN", "test-token")
+
+			graphqlClient := newMockGraphQLClient(
+				t,
+				staticJSONHandler(
+					http.StatusOK,
+					singleMergeRequestResponseForPipelineEnrichmentTests,
+				),
+			)
+			SetClient(graphqlClient)
+
+			jobsEndpointHit := false
+			mockRest := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(r.URL.Path, "/merge_requests/42/pipelines"):
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`[]`))
+				case strings.Contains(r.URL.Path, "/jobs"):
+					jobsEndpointHit = true
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`[]`))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			SetRESTClient(mockRest)
+
+			pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+			require.NoError(t, err)
+			assert.Equal(t, MergeRequestPipeline{}, pr.Pipeline)
+			assert.False(t, jobsEndpointHit)
+		},
+	)
+
+	t.Run(
+		"returns the mr successfully with a zero value pipeline when the rest pipeline lookup fails",
+		func(t *testing.T) {
+			defer SetClient(nil)
+			defer SetRESTClient(nil)
+			isolateGitLabAuthEnv(t)
+			t.Setenv("GITLAB_TOKEN", "test-token")
+
+			logBuf := captureLogOutput(t)
+
+			graphqlClient := newMockGraphQLClient(
+				t,
+				staticJSONHandler(
+					http.StatusOK,
+					singleMergeRequestResponseForPipelineEnrichmentTests,
+				),
+			)
+			SetClient(graphqlClient)
+
+			mockRest := newMockRESTClient(t, staticJSONHandler(http.StatusInternalServerError, ""))
+			SetRESTClient(mockRest)
+
+			pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+			require.NoError(t, err)
+			assert.Equal(t, 42, pr.Number)
+			assert.Equal(t, MergeRequestPipeline{}, pr.Pipeline)
+			assert.Contains(t, logBuf.String(), "WARN")
+		},
+	)
+
+	t.Run(
+		"keeps the pipeline without jobs when the rest jobs lookup fails, logging a warning",
+		func(t *testing.T) {
+			defer SetClient(nil)
+			defer SetRESTClient(nil)
+			isolateGitLabAuthEnv(t)
+			t.Setenv("GITLAB_TOKEN", "test-token")
+
+			logBuf := captureLogOutput(t)
+
+			graphqlClient := newMockGraphQLClient(
+				t,
+				staticJSONHandler(
+					http.StatusOK,
+					singleMergeRequestResponseForPipelineEnrichmentTests,
+				),
+			)
+			SetClient(graphqlClient)
+
+			mockRest := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/merge_requests/42/pipelines"):
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write(
+						[]byte(
+							`[{"id":900,"status":"running","web_url":"https://gitlab.com/group/proj/-/pipelines/900"}]`,
+						),
+					)
+				case strings.Contains(r.URL.Path, "/jobs"):
+					w.WriteHeader(http.StatusInternalServerError)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			SetRESTClient(mockRest)
+
+			pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+			require.NoError(t, err)
+			assert.Equal(t, int64(900), pr.Pipeline.ID)
+			assert.Equal(t, StatusRunning, pr.Pipeline.Status)
+			assert.Empty(t, pr.Pipeline.Jobs)
+			assert.Contains(t, logBuf.String(), "WARN")
+		},
+	)
+}
+
+func TestFetchPipelineBestEffort(t *testing.T) {
+	t.Run(
+		"returns a zero value pipeline without calling rest when mock data is enabled",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+			isolateGitLabAuthEnv(t)
+			t.Setenv("GITLAB_TOKEN", "test-token")
+			t.Setenv(config.FF_MOCK_DATA, "1")
+
+			restHit := false
+			SetRESTClient(newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				restHit = true
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+			}))
+
+			got := fetchPipelineBestEffort("group/proj", "42")
+
+			assert.Equal(t, MergeRequestPipeline{}, got)
+			assert.False(
+				t,
+				restHit,
+				"fetchPipelineBestEffort must not call the rest api when FF_MOCK_DATA is enabled",
+			)
+		},
+	)
+
+	t.Run(
+		"returns a zero value pipeline without resolving a rest client when none is cached and no gitlab token is configured",
+		func(t *testing.T) {
+			SetRESTClient(nil)
+			defer SetRESTClient(nil)
+			isolateGitLabAuthEnv(t)
+
+			got := fetchPipelineBestEffort("group/proj", "42")
+
+			assert.Equal(t, MergeRequestPipeline{}, got)
+			assert.Nil(
+				t,
+				gitlabRESTClient,
+				"fetchPipelineBestEffort must not resolve a rest client without a configured gitlab token",
+			)
+		},
+	)
+
+	t.Run(
+		"calls rest using an already cached client even when no gitlab token is configured",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+			isolateGitLabAuthEnv(t)
+
+			restHit := false
+			mockRest := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				restHit = true
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(r.URL.Path, "/merge_requests/42/pipelines"):
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(
+						`[{"id":900,"status":"running","web_url":"https://gitlab.com/group/proj/-/pipelines/900"}]`,
+					))
+				case strings.Contains(r.URL.Path, "/pipelines/900/jobs"):
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`[]`))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			SetRESTClient(mockRest)
+
+			got := fetchPipelineBestEffort("group/proj", "42")
+
+			assert.True(
+				t,
+				restHit,
+				"fetchPipelineBestEffort must use an already cached rest client without checking for a gitlab token",
+			)
+			assert.EqualValues(t, 900, got.ID)
+			assert.Equal(t, StatusRunning, got.Status)
+		},
+	)
+
+	t.Run(
+		"falls through the guard and resolves a rest client when none is cached but a gitlab token is configured",
+		func(t *testing.T) {
+			SetRESTClient(nil)
+			defer SetRESTClient(nil)
+			defer gitlab.SetClients(nil, nil)
+			isolateGitLabAuthEnv(t)
+			t.Setenv("GITLAB_TOKEN", "test-token")
+
+			mockRest := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(r.URL.Path, "/merge_requests/42/pipelines"):
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(
+						`[{"id":900,"status":"running","web_url":"https://gitlab.com/group/proj/-/pipelines/900"}]`,
+					))
+				case strings.Contains(r.URL.Path, "/pipelines/900/jobs"):
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`[]`))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			gitlab.SetClients(mockRest, nil)
+
+			got := fetchPipelineBestEffort("group/proj", "42")
+
+			assert.EqualValues(t, 900, got.ID)
+			assert.Equal(t, StatusRunning, got.Status)
+			assert.Same(t, mockRest, gitlabRESTClient)
+		},
+	)
 }

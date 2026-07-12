@@ -2,11 +2,18 @@ package tasks
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
+	gitlabapi "gitlab.com/gitlab-org/api/client-go"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 )
 
@@ -164,4 +171,236 @@ func TestApproveWorkflows_SectionIdentifierPropagation(t *testing.T) {
 			require.NotNil(t, cmd)
 		})
 	}
+}
+
+func newMockRESTClient(t *testing.T, handler http.HandlerFunc) *gitlabapi.Client {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	c, err := gitlabapi.NewClient(
+		"test-token",
+		gitlabapi.WithBaseURL(server.URL),
+		gitlabapi.WithoutRetries(),
+	)
+	require.NoError(t, err)
+	return c
+}
+
+func runApproveWorkflowsCmd(t *testing.T, cmd tea.Cmd) constants.TaskFinishedMsg {
+	t.Helper()
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	if finished, ok := msg.(constants.TaskFinishedMsg); ok {
+		return finished
+	}
+
+	batch, ok := msg.(tea.BatchMsg)
+	require.True(t, ok, "expected constants.TaskFinishedMsg or tea.BatchMsg, got %T", msg)
+
+	for _, sub := range batch {
+		if sub == nil {
+			continue
+		}
+		if finished, ok := sub().(constants.TaskFinishedMsg); ok {
+			return finished
+		}
+	}
+
+	t.Fatal("ApproveWorkflows command did not produce a constants.TaskFinishedMsg")
+	return constants.TaskFinishedMsg{}
+}
+
+func TestApproveWorkflows_PlaysAllManualJobs(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	var mu sync.Mutex
+	var playedPaths []string
+
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "/merge_requests/42/pipelines"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(
+				`[{"id":10,"status":"running","web_url":"https://gitlab.example.com/o/r/-/pipelines/10"}]`,
+			))
+		case strings.Contains(r.URL.Path, "/pipelines/10/jobs"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[
+				{"id":100,"name":"deploy-staging","stage":"deploy","status":"manual","web_url":"https://gitlab.example.com/o/r/-/jobs/100","allow_failure":false},
+				{"id":101,"name":"deploy-prod","stage":"deploy","status":"manual","web_url":"https://gitlab.example.com/o/r/-/jobs/101","allow_failure":false}
+			]`))
+		case strings.HasSuffix(r.URL.Path, "/play"):
+			mu.Lock()
+			playedPaths = append(playedPaths, r.URL.Path)
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":100,"name":"deploy-staging","status":"pending"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	pr := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := ApproveWorkflows(ctx, SectionIdentifier{Id: 1, Type: "pr"}, pr)
+	finished := runApproveWorkflowsCmd(t, cmd)
+
+	require.NoError(t, finished.Err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, playedPaths, 2, "both manual jobs should have been played")
+	joinedPlayedPaths := strings.Join(playedPaths, " ")
+	require.Contains(t, joinedPlayedPaths, "/jobs/100/play")
+	require.Contains(t, joinedPlayedPaths, "/jobs/101/play")
+}
+
+func TestApproveWorkflows_NoManualJobs(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "/merge_requests/42/pipelines"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(
+				`[{"id":10,"status":"running","web_url":"https://gitlab.example.com/o/r/-/pipelines/10"}]`,
+			))
+		case strings.Contains(r.URL.Path, "/pipelines/10/jobs"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	pr := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := ApproveWorkflows(ctx, SectionIdentifier{Id: 1, Type: "pr"}, pr)
+	finished := runApproveWorkflowsCmd(t, cmd)
+
+	require.Error(t, finished.Err)
+	require.Contains(t, finished.Err.Error(), "no workflows awaiting approval")
+}
+
+func TestApproveWorkflows_NoPipeline(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	var mu sync.Mutex
+	var jobsEndpointHits int
+
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "/merge_requests/42/pipelines"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		case strings.Contains(r.URL.Path, "/jobs"):
+			mu.Lock()
+			jobsEndpointHits++
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	pr := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := ApproveWorkflows(ctx, SectionIdentifier{Id: 1, Type: "pr"}, pr)
+	finished := runApproveWorkflowsCmd(t, cmd)
+
+	require.Error(t, finished.Err)
+	require.Contains(t, finished.Err.Error(), "no workflows awaiting approval")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(
+		t,
+		0,
+		jobsEndpointHits,
+		"ListPipelineJobs should not be called when there is no pipeline",
+	)
+}
+
+func TestApproveWorkflows_PartialFailureIsBestEffort(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	var mu sync.Mutex
+	var playedPaths []string
+
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "/merge_requests/42/pipelines"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(
+				`[{"id":10,"status":"running","web_url":"https://gitlab.example.com/o/r/-/pipelines/10"}]`,
+			))
+		case strings.Contains(r.URL.Path, "/pipelines/10/jobs"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[
+				{"id":100,"name":"deploy-staging","stage":"deploy","status":"manual","web_url":"https://gitlab.example.com/o/r/-/jobs/100","allow_failure":false},
+				{"id":101,"name":"deploy-prod","stage":"deploy","status":"manual","web_url":"https://gitlab.example.com/o/r/-/jobs/101","allow_failure":false}
+			]`))
+		case strings.Contains(r.URL.Path, "/jobs/100/play"):
+			mu.Lock()
+			playedPaths = append(playedPaths, r.URL.Path)
+			mu.Unlock()
+			w.WriteHeader(http.StatusForbidden)
+		case strings.Contains(r.URL.Path, "/jobs/101/play"):
+			mu.Lock()
+			playedPaths = append(playedPaths, r.URL.Path)
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":101,"name":"deploy-prod","status":"pending"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	pr := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := ApproveWorkflows(ctx, SectionIdentifier{Id: 1, Type: "pr"}, pr)
+	finished := runApproveWorkflowsCmd(t, cmd)
+
+	require.Error(t, finished.Err, "the failed play of job 100 should surface as the task error")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(
+		t,
+		playedPaths,
+		2,
+		"both jobs should have been attempted even though the first one failed",
+	)
+}
+
+func TestApproveWorkflows_PipelineLookupError(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	pr := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := ApproveWorkflows(ctx, SectionIdentifier{Id: 1, Type: "pr"}, pr)
+	finished := runApproveWorkflowsCmd(t, cmd)
+
+	require.Error(t, finished.Err)
+	require.Contains(t, finished.Err.Error(), "failed to locate pipeline")
 }

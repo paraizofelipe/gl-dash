@@ -491,7 +491,7 @@ func (m *BaseModel) GetPromptConfirmation() string {
 			prompt = "Are you sure you want to update this PR? (y/N) "
 
 		case m.PromptConfirmationAction == "approveWorkflows" && m.Ctx.View == config.PRsView:
-			prompt = "Are you sure you want to approve all workflows? (y/N) "
+			prompt = "Run all manual jobs in this pipeline? This may include deploys. (y/N) "
 
 		case m.PromptConfirmationAction == "close" && m.Ctx.View == config.IssuesView:
 			prompt = "Are you sure you want to close this issue? (y/N) "

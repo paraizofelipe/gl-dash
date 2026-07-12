@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -429,38 +430,17 @@ func ApproveWorkflows(
 	startCmd := ctx.StartTask(task)
 
 	return tea.Batch(startCmd, func() tea.Msg {
-		// Step 1: Get head SHA
-		shaCmd := exec.Command("gh", "pr", "view", fmt.Sprint(prNumber),
-			"-R", repo, "--json", "headRefOid", "--jq", ".headRefOid")
-		shaOut, err := shaCmd.Output()
+		pipeline, err := data.FindPipelineForMR(repo, prNumber)
 		if err != nil {
 			return constants.TaskFinishedMsg{
 				TaskId:      taskId,
 				SectionId:   section.Id,
 				SectionType: section.Type,
-				Err:         fmt.Errorf("failed to get head SHA: %w", err),
+				Err:         fmt.Errorf("failed to locate pipeline: %w", err),
 				Msg:         UpdatePRMsg{PrNumber: prNumber},
 			}
 		}
-		sha := strings.TrimSpace(string(shaOut))
-
-		// Step 2: Get workflow run IDs awaiting approval
-		runsCmd := exec.Command("gh", "api",
-			fmt.Sprintf("repos/%s/actions/runs?status=action_required&head_sha=%s", repo, sha),
-			"--jq", ".workflow_runs[].id")
-		runsOut, err := runsCmd.Output()
-		if err != nil {
-			return constants.TaskFinishedMsg{
-				TaskId:      taskId,
-				SectionId:   section.Id,
-				SectionType: section.Type,
-				Err:         fmt.Errorf("failed to get workflow runs: %w", err),
-				Msg:         UpdatePRMsg{PrNumber: prNumber},
-			}
-		}
-
-		runIds := strings.Fields(strings.TrimSpace(string(runsOut)))
-		if len(runIds) == 0 {
+		if pipeline.ID == 0 {
 			return constants.TaskFinishedMsg{
 				TaskId:      taskId,
 				SectionId:   section.Id,
@@ -470,33 +450,58 @@ func ApproveWorkflows(
 			}
 		}
 
-		// Step 3: Approve each run (best-effort)
-		var lastErr error
-		approved := 0
-		for _, runId := range runIds {
-			log.Info("Approving workflow run", "runId", runId, "pr", prNumber)
-			approveCmd := exec.Command("gh", "api", "-X", "POST",
-				fmt.Sprintf("repos/%s/actions/runs/%s/approve", repo, runId))
-			output, err := approveCmd.CombinedOutput()
-			if err != nil {
-				outStr := string(output)
-				if strings.Contains(outStr, "not from a fork pull request") {
-					lastErr = fmt.Errorf(
-						"workflow not approvable via API (only fork PR workflows can be approved)",
-					)
-				} else {
-					lastErr = fmt.Errorf("failed to approve run %s: %w", runId, err)
-				}
-			} else {
-				approved++
+		manualJobs, err := data.ListPipelineJobs(repo, pipeline.ID, "manual")
+		if err != nil {
+			return constants.TaskFinishedMsg{
+				TaskId:      taskId,
+				SectionId:   section.Id,
+				SectionType: section.Type,
+				Err:         fmt.Errorf("failed to list manual jobs: %w", err),
+				Msg:         UpdatePRMsg{PrNumber: prNumber},
 			}
 		}
+		if len(manualJobs) == 0 {
+			return constants.TaskFinishedMsg{
+				TaskId:      taskId,
+				SectionId:   section.Id,
+				SectionType: section.Type,
+				Err:         fmt.Errorf("no workflows awaiting approval"),
+				Msg:         UpdatePRMsg{PrNumber: prNumber},
+			}
+		}
+
+		// Play each manual job (best-effort). Manual jobs are not limited to
+		// low-risk re-runs: a pipeline commonly gates real deploys behind a
+		// manual job (e.g. "deploy-staging"/"deploy-prod"), so every job
+		// played here is logged individually for auditability.
+		var playErrs []error
+		approved := 0
+		for _, job := range manualJobs {
+			log.Info(
+				"Playing manual job",
+				"jobId", job.ID,
+				"jobName", job.Name,
+				"stage", job.Stage,
+				"pr", prNumber,
+			)
+			if err := data.PlayJob(repo, job.ID); err != nil {
+				playErrs = append(playErrs, fmt.Errorf("failed to play job %d: %w", job.ID, err))
+				continue
+			}
+			approved++
+		}
+		log.Info(
+			"Finished playing manual jobs",
+			"pr", prNumber,
+			"played", approved,
+			"total", len(manualJobs),
+		)
 
 		return constants.TaskFinishedMsg{
 			TaskId:      taskId,
 			SectionId:   section.Id,
 			SectionType: section.Type,
-			Err:         lastErr,
+			Err:         errors.Join(playErrs...),
 			Msg:         UpdatePRMsg{PrNumber: prNumber},
 		}
 	})

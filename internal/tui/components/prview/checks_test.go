@@ -17,10 +17,8 @@ import (
 )
 
 type checksTestOptions struct {
-	checkSuites          data.CheckSuites
-	checkRuns            []data.CheckRun
-	rollupState          string
-	requiredStatusChecks []string
+	isEnriched bool
+	jobs       []data.PipelineJob
 }
 
 func newTestModelForChecks(t *testing.T, opts checksTestOptions) Model {
@@ -39,501 +37,378 @@ func newTestModelForChecks(t *testing.T, opts checksTestOptions) Model {
 		Styles: context.InitStyles(thm),
 	}
 
-	// Build branch protection rules
-	branchRules := data.BranchProtectionRules{}
-	if len(opts.requiredStatusChecks) > 0 {
-		ruleNode := struct {
-			RequiredApprovingReviewCount int
-			RequiresApprovingReviews     graphql.Boolean
-			RequiresCodeOwnerReviews     graphql.Boolean
-			RequiresStatusChecks         graphql.Boolean
-			RequiredStatusCheckContexts  []graphql.String
-		}{
-			RequiresStatusChecks: true,
-		}
-		for _, ctx := range opts.requiredStatusChecks {
-			ruleNode.RequiredStatusCheckContexts = append(
-				ruleNode.RequiredStatusCheckContexts,
-				graphql.String(ctx),
-			)
-		}
-		branchRules.Nodes = append(branchRules.Nodes, ruleNode)
-	}
-
-	// Build the enriched data with commits
-	enriched := data.EnrichedPullRequestData{}
-
-	// We need to directly construct the Commits field
-	// Since it uses anonymous struct types, we build it inline
-	enriched.Commits.TotalCount = 1
-	enriched.Commits.Nodes = make([]struct {
-		Commit struct {
-			Deployments struct {
-				Nodes []struct {
-					Task        graphql.String
-					Description graphql.String
-				}
-			} `graphql:"deployments(last: 10)"`
-			CommitUrl         graphql.String
-			StatusCheckRollup struct {
-				State    graphql.String
-				Contexts struct {
-					TotalCount                 graphql.Int
-					CheckRunCount              graphql.Int
-					CheckRunCountsByState      []data.ContextCountByState
-					StatusContextCount         graphql.Int
-					StatusContextCountsByState []data.ContextCountByState
-					Nodes                      []struct {
-						Typename      graphql.String     `graphql:"__typename"`
-						CheckRun      data.CheckRun      `graphql:"... on CheckRun"`
-						StatusContext data.StatusContext `graphql:"... on StatusContext"`
-					}
-				} `graphql:"contexts(last: 100)"`
-			}
-			CheckSuites data.CheckSuites `graphql:"checkSuites(last: 20)"`
-		}
-	}, 1)
-
-	// Set up the commit data
-	enriched.Commits.Nodes[0].Commit.CheckSuites = opts.checkSuites
-	enriched.Commits.Nodes[0].Commit.StatusCheckRollup.State = graphql.String(opts.rollupState)
-	enriched.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.TotalCount = graphql.Int(
-		len(opts.checkRuns),
-	)
-	enriched.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.CheckRunCount = graphql.Int(
-		len(opts.checkRuns),
-	)
-
-	// Build context nodes from check runs and aggregate counts by state
-	stateCounts := make(map[string]int)
-	for _, cr := range opts.checkRuns {
-		contextNode := struct {
-			Typename      graphql.String     `graphql:"__typename"`
-			CheckRun      data.CheckRun      `graphql:"... on CheckRun"`
-			StatusContext data.StatusContext `graphql:"... on StatusContext"`
-		}{
-			Typename: "CheckRun",
-			CheckRun: cr,
-		}
-		enriched.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes = append(
-			enriched.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes,
-			contextNode,
-		)
-
-		// Aggregate by state (status for in-progress, conclusion for completed)
-		state := string(cr.Status)
-		if state == "COMPLETED" {
-			state = string(cr.Conclusion)
-		}
-		stateCounts[state]++
-	}
-
-	// Populate CheckRunCountsByState from aggregated counts
-	for state, count := range stateCounts {
-		enriched.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.CheckRunCountsByState = append(
-			enriched.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.CheckRunCountsByState,
-			data.ContextCountByState{
-				State: checks.CheckRunState(state),
-				Count: graphql.Int(count),
-			},
-		)
-	}
-
 	m := NewModel(ctx)
 	m.ctx = ctx
 	m.width = 80
 	m.pr = &prrow.PullRequest{
 		Ctx: ctx,
 		Data: &prrow.Data{
-			Primary: &data.PullRequestData{
-				Repository: data.Repository{
-					BranchProtectionRules: branchRules,
+			Primary:    &data.PullRequestData{},
+			IsEnriched: opts.isEnriched,
+			Enriched: data.EnrichedPullRequestData{
+				Pipeline: data.MergeRequestPipeline{
+					Jobs: opts.jobs,
 				},
 			},
-			IsEnriched: true,
-			Enriched:   enriched,
 		},
 	}
 	return m
 }
 
-func makeCheckRun(name string, status string, conclusion checks.CheckRunState) data.CheckRun {
-	return data.CheckRun{
-		Name:       graphql.String(name),
-		Status:     graphql.String(status),
-		Conclusion: conclusion,
+func newEnrichedTestModelForChecks(t *testing.T, jobs []data.PipelineJob) Model {
+	t.Helper()
+	return newTestModelForChecks(t, checksTestOptions{isEnriched: true, jobs: jobs})
+}
+
+func makeJob(stage, name string, status data.PipelineStatus) data.PipelineJob {
+	return data.PipelineJob{
+		Stage:  stage,
+		Name:   name,
+		Status: status,
 	}
 }
 
-func makeCheckSuite(workflowName string, status string, conclusion string) data.CheckSuiteNode {
-	return data.CheckSuiteNode{
-		Status:     graphql.String(status),
-		Conclusion: graphql.String(conclusion),
-		WorkflowRun: struct {
-			Workflow struct {
-				Name graphql.String
-			}
-		}{
-			Workflow: struct {
-				Name graphql.String
-			}{
-				Name: graphql.String(workflowName),
-			},
+func TestRenderJobName(t *testing.T) {
+	tests := []struct {
+		name string
+		job  data.PipelineJob
+		want string
+	}{
+		{"stage and name both present", data.PipelineJob{Stage: "test", Name: "unit"}, "test/unit"},
+		{"only name present", data.PipelineJob{Stage: "", Name: "build"}, "build"},
+		{"only stage present", data.PipelineJob{Stage: "deploy", Name: ""}, "deploy"},
+		{"both empty", data.PipelineJob{Stage: "", Name: ""}, ""},
+		{
+			"surrounding whitespace is trimmed",
+			data.PipelineJob{Stage: "  test  ", Name: "  unit  "},
+			"test/unit",
 		},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderJobName(tt.job)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRenderJobConclusion(t *testing.T) {
+	m := newEnrichedTestModelForChecks(t, nil)
+
+	tests := []struct {
+		name         string
+		status       data.PipelineStatus
+		wantCategory CheckCategory
+		wantIcon     string
+	}{
+		{
+			"manual status is waiting",
+			data.StatusManual,
+			CheckWaiting,
+			m.ctx.Styles.Common.WaitingGlyph,
+		},
+		{
+			"pending status is waiting",
+			data.StatusPending,
+			CheckWaiting,
+			m.ctx.Styles.Common.WaitingGlyph,
+		},
+		{
+			"running status is waiting",
+			data.StatusRunning,
+			CheckWaiting,
+			m.ctx.Styles.Common.WaitingGlyph,
+		},
+		{
+			"failed status is failure",
+			data.StatusFailed,
+			CheckFailure,
+			m.ctx.Styles.Common.FailureGlyph,
+		},
+		{
+			"success status is success",
+			data.StatusSuccess,
+			CheckSuccess,
+			m.ctx.Styles.Common.SuccessGlyph,
+		},
+		{
+			"skipped status falls back to the success bucket",
+			data.StatusSkipped,
+			CheckSuccess,
+			m.ctx.Styles.Common.SuccessGlyph,
+		},
+		{
+			"canceled status falls back to the success bucket",
+			data.StatusCanceled,
+			CheckSuccess,
+			m.ctx.Styles.Common.SuccessGlyph,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotCategory, gotIcon := m.renderJobConclusion(data.PipelineJob{Status: tt.status})
+			require.Equal(t, tt.wantCategory, gotCategory)
+			require.Equal(t, tt.wantIcon, gotIcon)
+		})
+	}
+}
+
+func TestRenderChecks_Loading(t *testing.T) {
+	t.Run("not enriched and no jobs shows loading", func(t *testing.T) {
+		m := newTestModelForChecks(t, checksTestOptions{isEnriched: false})
+		got := m.renderChecks()
+
+		require.True(t, strings.Contains(got, "Loading..."),
+			"expected 'Loading...' message, got: %q", got)
+		require.False(t, strings.Contains(got, "No checks to display"),
+			"did not expect 'No checks to display...' while not enriched, got: %q", got)
+	})
+
+	t.Run("not enriched takes priority over having jobs", func(t *testing.T) {
+		m := newTestModelForChecks(t, checksTestOptions{
+			isEnriched: false,
+			jobs:       []data.PipelineJob{makeJob("test", "unit", data.StatusSuccess)},
+		})
+		got := m.renderChecks()
+
+		require.True(t, strings.Contains(got, "Loading..."),
+			"expected 'Loading...' message even with jobs present, got: %q", got)
+	})
+}
+
+func TestRenderChecks_NoChecks(t *testing.T) {
+	t.Run("nil jobs", func(t *testing.T) {
+		m := newEnrichedTestModelForChecks(t, nil)
+		got := m.renderChecks()
+
+		require.True(t, strings.Contains(got, "No checks to display"),
+			"expected 'No checks to display...' message, got: %q", got)
+	})
+
+	t.Run("empty jobs slice", func(t *testing.T) {
+		m := newEnrichedTestModelForChecks(t, []data.PipelineJob{})
+		got := m.renderChecks()
+
+		require.True(t, strings.Contains(got, "No checks to display"),
+			"expected 'No checks to display...' message, got: %q", got)
+	})
 }
 
 func TestRenderChecks_AwaitingApproval(t *testing.T) {
-	// Test that CheckSuites with conclusion: ACTION_REQUIRED are shown
-	// under "Awaiting Approval" section
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 3,
-			Nodes: []data.CheckSuiteNode{
-				makeCheckSuite("Check Redirects", "COMPLETED", "ACTION_REQUIRED"),
-				makeCheckSuite("Check URL issues", "COMPLETED", "ACTION_REQUIRED"),
-				makeCheckSuite("PR Test", "COMPLETED", "ACTION_REQUIRED"),
-			},
-		},
-		checkRuns:   []data.CheckRun{},
-		rollupState: "SUCCESS",
+	jobs := []data.PipelineJob{
+		makeJob("deploy", "prod", data.StatusManual),
+		makeJob("release", "tag", data.StatusManual),
 	}
+	m := newEnrichedTestModelForChecks(t, jobs)
 
-	m := newTestModelForChecks(t, opts)
 	got := m.renderChecks()
 
-	// Should show "Awaiting Approval" section header
-	require.True(t, strings.Contains(got, "Awaiting Approval"),
-		"expected 'Awaiting Approval' section, got: %q", got)
-
-	// Should show all three workflow names
-	require.True(t, strings.Contains(got, "Check Redirects"),
-		"expected 'Check Redirects' workflow, got: %q", got)
-	require.True(t, strings.Contains(got, "Check URL issues"),
-		"expected 'Check URL issues' workflow, got: %q", got)
-	require.True(t, strings.Contains(got, "PR Test"),
-		"expected 'PR Test' workflow, got: %q", got)
-
-	// Should show the action required icon
+	require.True(t, strings.Contains(got, "Awaiting Approval (2)"),
+		"expected 'Awaiting Approval (2)' section, got: %q", got)
+	require.True(t, strings.Contains(got, "deploy/prod"),
+		"expected 'deploy/prod' job name, got: %q", got)
+	require.True(t, strings.Contains(got, "release/tag"),
+		"expected 'release/tag' job name, got: %q", got)
 	require.True(t, strings.Contains(got, constants.ActionRequiredIcon),
 		"expected ActionRequiredIcon, got: %q", got)
 }
 
-func TestRenderChecks_PendingCheckSuites(t *testing.T) {
-	// Test that CheckSuites with status: QUEUED/PENDING/WAITING are shown
-	// under "Pending" section
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 2,
-			Nodes: []data.CheckSuiteNode{
-				makeCheckSuite("Build", "QUEUED", ""),
-				makeCheckSuite("Deploy", "PENDING", ""),
-			},
-		},
-		checkRuns:   []data.CheckRun{},
-		rollupState: "PENDING",
+func TestRenderChecks_FailedJobs(t *testing.T) {
+	jobs := []data.PipelineJob{
+		makeJob("test", "unit", data.StatusFailed),
+		makeJob("test", "lint", data.StatusSuccess),
 	}
+	m := newEnrichedTestModelForChecks(t, jobs)
 
-	m := newTestModelForChecks(t, opts)
 	got := m.renderChecks()
 
-	// Should show "Pending" section header
-	require.True(t, strings.Contains(got, "Pending"),
-		"expected 'Pending' section, got: %q", got)
-
-	// Should show workflow names
-	require.True(t, strings.Contains(got, "Build"),
-		"expected 'Build' workflow, got: %q", got)
-	require.True(t, strings.Contains(got, "Deploy"),
-		"expected 'Deploy' workflow, got: %q", got)
-
-	// Should show waiting icon
-	require.True(t, strings.Contains(got, constants.WaitingIcon),
-		"expected WaitingIcon, got: %q", got)
+	require.True(t, strings.Contains(got, "test/unit"),
+		"expected 'test/unit' job name, got: %q", got)
+	require.True(t, strings.Contains(got, "test/lint"),
+		"expected 'test/lint' job name, got: %q", got)
+	require.True(t, strings.Contains(got, constants.FailureIcon),
+		"expected FailureIcon for failed job, got: %q", got)
+	require.True(t, strings.Contains(got, constants.SuccessIcon),
+		"expected SuccessIcon for successful job, got: %q", got)
 }
 
-func TestRenderChecks_RequiredButNotReported(t *testing.T) {
-	// Test that required status checks from branch protection rules
-	// that haven't been reported yet are shown as pending
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 0,
-			Nodes:      []data.CheckSuiteNode{},
-		},
-		checkRuns: []data.CheckRun{
-			// Only one check has been reported
-			makeCheckRun("lint", "COMPLETED", "SUCCESS"),
-		},
-		rollupState: "SUCCESS",
-		requiredStatusChecks: []string{
-			"lint",            // This one is reported
-			"check-redirects", // This one is NOT reported
-			"tests",           // This one is NOT reported
-		},
+func TestRenderChecks_WaitingJobs(t *testing.T) {
+	jobs := []data.PipelineJob{
+		makeJob("build", "compile", data.StatusRunning),
+		makeJob("build", "package", data.StatusPending),
 	}
+	m := newEnrichedTestModelForChecks(t, jobs)
 
-	m := newTestModelForChecks(t, opts)
 	got := m.renderChecks()
 
-	// Should show "Pending" section for unreported required checks
-	require.True(t, strings.Contains(got, "Pending"),
-		"expected 'Pending' section for unreported required checks, got: %q", got)
-
-	// Should show the unreported required checks
-	require.True(t, strings.Contains(got, "check-redirects"),
-		"expected 'check-redirects' as pending, got: %q", got)
-	require.True(t, strings.Contains(got, "tests"),
-		"expected 'tests' as pending, got: %q", got)
-
-	// Should NOT show "lint" in pending since it was reported
-	// Count occurrences - lint should only appear once (in the success section)
-	lintCount := strings.Count(got, "lint")
-	require.Equal(
-		t,
-		1,
-		lintCount,
-		"expected 'lint' to appear exactly once (not in pending), got %d occurrences in: %q",
-		lintCount,
-		got,
-	)
+	require.True(t, strings.Contains(got, "build/compile"),
+		"expected 'build/compile' job name, got: %q", got)
+	require.True(t, strings.Contains(got, "build/package"),
+		"expected 'build/package' job name, got: %q", got)
+	require.True(t, strings.Contains(got, constants.WaitingIcon),
+		"expected WaitingIcon for in-progress jobs, got: %q", got)
 }
 
 func TestRenderChecks_MixedStates(t *testing.T) {
-	// Test a realistic scenario with:
-	// - Awaiting approval workflows
-	// - Some successful checks
-	// - Required checks not yet reported
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 3,
-			Nodes: []data.CheckSuiteNode{
-				// Awaiting approval
-				makeCheckSuite("Check Redirects", "COMPLETED", "ACTION_REQUIRED"),
-				makeCheckSuite("PR Test", "COMPLETED", "ACTION_REQUIRED"),
-				// Completed successfully (not ACTION_REQUIRED)
-				makeCheckSuite("PR labeler", "COMPLETED", "SUCCESS"),
-			},
-		},
-		checkRuns: []data.CheckRun{
-			// Successful checks from PR labeler
-			makeCheckRun("Label by path", "COMPLETED", "SUCCESS"),
-			makeCheckRun("Label by size", "COMPLETED", "SUCCESS"),
-		},
-		rollupState: "SUCCESS",
-		requiredStatusChecks: []string{
-			"Label by path",   // Reported
-			"check-redirects", // NOT reported (from awaiting approval workflow)
-			"tests",           // NOT reported (from awaiting approval workflow)
-		},
+	jobs := []data.PipelineJob{
+		makeJob("deploy", "approval", data.StatusManual),
+		makeJob("test", "unit", data.StatusFailed),
+		makeJob("build", "compile", data.StatusRunning),
+		makeJob("test", "lint", data.StatusSuccess),
 	}
+	m := newEnrichedTestModelForChecks(t, jobs)
 
-	m := newTestModelForChecks(t, opts)
 	got := m.renderChecks()
 
-	// Should have "Awaiting Approval" section
-	require.True(t, strings.Contains(got, "Awaiting Approval"),
-		"expected 'Awaiting Approval' section, got: %q", got)
-	require.True(t, strings.Contains(got, "Check Redirects"),
-		"expected 'Check Redirects' in awaiting approval, got: %q", got)
-	require.True(t, strings.Contains(got, "PR Test"),
-		"expected 'PR Test' in awaiting approval, got: %q", got)
-
-	// Should have "Pending" section for required but not reported
-	require.True(t, strings.Contains(got, "Pending"),
-		"expected 'Pending' section, got: %q", got)
-	require.True(t, strings.Contains(got, "check-redirects"),
-		"expected 'check-redirects' as pending, got: %q", got)
-	require.True(t, strings.Contains(got, "tests"),
-		"expected 'tests' as pending, got: %q", got)
-
-	// Should have successful checks
-	require.True(t, strings.Contains(got, "Label by path"),
-		"expected 'Label by path' check, got: %q", got)
-	require.True(t, strings.Contains(got, "Label by size"),
-		"expected 'Label by size' check, got: %q", got)
-	require.True(t, strings.Contains(got, constants.SuccessIcon),
-		"expected SuccessIcon for successful checks, got: %q", got)
-}
-
-func TestRenderChecks_NoChecks(t *testing.T) {
-	// Test that "No checks to display..." is shown when there are no checks
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 0,
-			Nodes:      []data.CheckSuiteNode{},
-		},
-		checkRuns:            []data.CheckRun{},
-		rollupState:          "SUCCESS",
-		requiredStatusChecks: []string{},
-	}
-
-	m := newTestModelForChecks(t, opts)
-	got := m.renderChecks()
-
-	require.True(t, strings.Contains(got, "No checks to display"),
-		"expected 'No checks to display...' message, got: %q", got)
-}
-
-func TestRenderChecks_FailedChecks(t *testing.T) {
-	// Test that failed checks are displayed with failure icon
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 0,
-			Nodes:      []data.CheckSuiteNode{},
-		},
-		checkRuns: []data.CheckRun{
-			makeCheckRun("build", "COMPLETED", "FAILURE"),
-			makeCheckRun("lint", "COMPLETED", "SUCCESS"),
-		},
-		rollupState: "FAILURE",
-	}
-
-	m := newTestModelForChecks(t, opts)
-	got := m.renderChecks()
-
-	// Should show both checks
-	require.True(t, strings.Contains(got, "build"),
-		"expected 'build' check, got: %q", got)
-	require.True(t, strings.Contains(got, "lint"),
-		"expected 'lint' check, got: %q", got)
-
-	// Should have failure icon
+	require.True(t, strings.Contains(got, "Awaiting Approval (1)"),
+		"expected 'Awaiting Approval (1)' section, got: %q", got)
+	require.True(t, strings.Contains(got, "deploy/approval"),
+		"expected 'deploy/approval' job name, got: %q", got)
+	require.True(t, strings.Contains(got, "test/unit"),
+		"expected 'test/unit' job name, got: %q", got)
+	require.True(t, strings.Contains(got, "build/compile"),
+		"expected 'build/compile' job name, got: %q", got)
+	require.True(t, strings.Contains(got, "test/lint"),
+		"expected 'test/lint' job name, got: %q", got)
+	require.True(t, strings.Contains(got, constants.ActionRequiredIcon),
+		"expected ActionRequiredIcon, got: %q", got)
 	require.True(t, strings.Contains(got, constants.FailureIcon),
-		"expected FailureIcon for failed check, got: %q", got)
-
-	// Should have success icon
-	require.True(t, strings.Contains(got, constants.SuccessIcon),
-		"expected SuccessIcon for successful check, got: %q", got)
-}
-
-func TestRenderChecks_InProgressChecks(t *testing.T) {
-	// Test that in-progress checks are displayed with waiting icon
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 0,
-			Nodes:      []data.CheckSuiteNode{},
-		},
-		checkRuns: []data.CheckRun{
-			makeCheckRun("build", "IN_PROGRESS", ""),
-			makeCheckRun("lint", "QUEUED", ""),
-		},
-		rollupState: "PENDING",
-	}
-
-	m := newTestModelForChecks(t, opts)
-	got := m.renderChecks()
-
-	// Should show both checks
-	require.True(t, strings.Contains(got, "build"),
-		"expected 'build' check, got: %q", got)
-	require.True(t, strings.Contains(got, "lint"),
-		"expected 'lint' check, got: %q", got)
-
-	// Should have waiting icon for in-progress checks
+		"expected FailureIcon, got: %q", got)
 	require.True(t, strings.Contains(got, constants.WaitingIcon),
-		"expected WaitingIcon for in-progress checks, got: %q", got)
+		"expected WaitingIcon, got: %q", got)
+	require.True(t, strings.Contains(got, constants.SuccessIcon),
+		"expected SuccessIcon, got: %q", got)
+	require.False(t, strings.Contains(got, "Pending ("),
+		"the old header-based 'Pending (N)' section must no longer exist, got: %q", got)
+
+	awaitingIdx := strings.Index(got, "Awaiting Approval")
+	failedIdx := strings.Index(got, "test/unit")
+	require.True(t, awaitingIdx >= 0 && failedIdx >= 0 && awaitingIdx < failedIdx,
+		"expected 'Awaiting Approval' section to render before failures, got: %q", got)
 }
 
-func TestGetChecksStats_AwaitingApproval(t *testing.T) {
-	// Test that getChecksStats correctly counts awaiting approval
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 3,
-			Nodes: []data.CheckSuiteNode{
-				makeCheckSuite("Check Redirects", "COMPLETED", "ACTION_REQUIRED"),
-				makeCheckSuite("Check URL issues", "COMPLETED", "ACTION_REQUIRED"),
-				makeCheckSuite("PR Test", "COMPLETED", "ACTION_REQUIRED"),
+func TestGetChecksStats(t *testing.T) {
+	tests := []struct {
+		name string
+		jobs []data.PipelineJob
+		want checksStats
+	}{
+		{
+			name: "mixed states increment each independent bucket",
+			jobs: []data.PipelineJob{
+				makeJob("s", "a", data.StatusManual),
+				makeJob("s", "b", data.StatusManual),
+				makeJob("s", "c", data.StatusSuccess),
+				makeJob("s", "d", data.StatusFailed),
+				makeJob("s", "e", data.StatusRunning),
+				makeJob("s", "f", data.StatusPending),
+				makeJob("s", "g", data.StatusSkipped),
+				makeJob("s", "h", data.StatusCanceled),
+			},
+			want: checksStats{
+				succeeded:        1,
+				neutral:          1,
+				failed:           1,
+				skipped:          1,
+				inProgress:       2,
+				awaitingApproval: 2,
 			},
 		},
-		checkRuns:   []data.CheckRun{},
-		rollupState: "SUCCESS",
+		{
+			name: "no jobs yields zero stats",
+			jobs: nil,
+			want: checksStats{},
+		},
 	}
 
-	m := newTestModelForChecks(t, opts)
-	stats := m.getChecksStats()
-
-	require.Equal(t, 3, stats.awaitingApproval,
-		"expected 3 awaiting approval, got: %d", stats.awaitingApproval)
-}
-
-func TestGetChecksStats_PendingCheckSuites(t *testing.T) {
-	// Test that getChecksStats correctly counts pending check suites as inProgress
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 2,
-			Nodes: []data.CheckSuiteNode{
-				makeCheckSuite("Build", "QUEUED", ""),
-				makeCheckSuite("Deploy", "WAITING", ""),
-			},
-		},
-		checkRuns:   []data.CheckRun{},
-		rollupState: "PENDING",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newEnrichedTestModelForChecks(t, tt.jobs)
+			got := m.getChecksStats()
+			require.Equal(t, tt.want, got)
+		})
 	}
-
-	m := newTestModelForChecks(t, opts)
-	stats := m.getChecksStats()
-
-	require.Equal(t, 2, stats.inProgress,
-		"expected 2 in progress (from pending check suites), got: %d", stats.inProgress)
-}
-
-func TestGetChecksStats_Mixed(t *testing.T) {
-	// Test a mix of check states
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 2,
-			Nodes: []data.CheckSuiteNode{
-				makeCheckSuite("Check Redirects", "COMPLETED", "ACTION_REQUIRED"),
-				makeCheckSuite("Build", "QUEUED", ""),
-			},
-		},
-		checkRuns: []data.CheckRun{
-			makeCheckRun("lint", "COMPLETED", "SUCCESS"),
-			makeCheckRun("test", "COMPLETED", "FAILURE"),
-			makeCheckRun("build", "IN_PROGRESS", ""),
-		},
-		rollupState: "FAILURE",
-	}
-
-	m := newTestModelForChecks(t, opts)
-	stats := m.getChecksStats()
-
-	require.Equal(t, 1, stats.awaitingApproval,
-		"expected 1 awaiting approval, got: %d", stats.awaitingApproval)
-	require.Equal(t, 1, stats.succeeded,
-		"expected 1 succeeded, got: %d", stats.succeeded)
-	require.Equal(t, 1, stats.failed,
-		"expected 1 failed, got: %d", stats.failed)
-	// 1 from IN_PROGRESS check run + 1 from QUEUED check suite
-	require.Equal(t, 2, stats.inProgress,
-		"expected 2 in progress, got: %d", stats.inProgress)
 }
 
 func TestViewChecksBar_NarrowWidth_NoPanic(t *testing.T) {
-	// Regression test for https://github.com/dlvhdr/gh-dash/issues/795
-	// When the sidebar is very narrow, viewChecksBar() computes a negative
-	// width for strings.Repeat, which panics.
-	opts := checksTestOptions{
-		checkSuites: data.CheckSuites{
-			TotalCount: 0,
-			Nodes:      []data.CheckSuiteNode{},
-		},
-		checkRuns: []data.CheckRun{
-			makeCheckRun("build", "COMPLETED", "FAILURE"),
-			makeCheckRun("lint", "COMPLETED", "SUCCESS"),
-			makeCheckRun("test", "IN_PROGRESS", ""),
-		},
-		rollupState: "FAILURE",
+	jobs := []data.PipelineJob{
+		makeJob("build", "compile", data.StatusFailed),
+		makeJob("test", "lint", data.StatusSuccess),
+		makeJob("test", "unit", data.StatusRunning),
 	}
+	m := newEnrichedTestModelForChecks(t, jobs)
 
-	m := newTestModelForChecks(t, opts)
-
-	// Simulate a very narrow sidebar that would make w negative
 	for _, width := range []int{0, 1, 5, 10} {
 		m.width = width
-		// Should not panic
 		require.NotPanics(t, func() {
 			m.viewChecksBar()
 		}, "viewChecksBar panicked with width=%d", width)
+	}
+}
+
+func TestGetStatusCheckRollupStats(t *testing.T) {
+	tests := []struct {
+		name                string
+		checkRunCounts      []data.ContextCountByState
+		statusContextCounts []data.ContextCountByState
+		want                checksStats
+	}{
+		{
+			name: "success and failed states populate their buckets",
+			checkRunCounts: []data.ContextCountByState{
+				{State: checks.CheckRunState("success"), Count: graphql.Int(3)},
+				{State: checks.CheckRunState("failed"), Count: graphql.Int(2)},
+			},
+			want: checksStats{succeeded: 3, failed: 2},
+		},
+		{
+			name: "running and skipped states populate their buckets",
+			checkRunCounts: []data.ContextCountByState{
+				{State: checks.CheckRunState("running"), Count: graphql.Int(4)},
+				{State: checks.CheckRunState("skipped"), Count: graphql.Int(1)},
+			},
+			want: checksStats{inProgress: 4, skipped: 1},
+		},
+		{
+			name: "canceled state populates the neutral bucket",
+			checkRunCounts: []data.ContextCountByState{
+				{State: checks.CheckRunState("canceled"), Count: graphql.Int(5)},
+			},
+			want: checksStats{neutral: 5},
+		},
+		{
+			name: "check run and status context counts are aggregated together",
+			checkRunCounts: []data.ContextCountByState{
+				{State: checks.CheckRunState("success"), Count: graphql.Int(2)},
+			},
+			statusContextCounts: []data.ContextCountByState{
+				{State: checks.CheckRunState("success"), Count: graphql.Int(1)},
+				{State: checks.CheckRunState("failed"), Count: graphql.Int(3)},
+			},
+			want: checksStats{succeeded: 3, failed: 3},
+		},
+		{
+			name: "uppercase graphql-style state values are normalized before matching",
+			checkRunCounts: []data.ContextCountByState{
+				{State: checks.CheckRunState("SUCCESS"), Count: graphql.Int(2)},
+				{State: checks.CheckRunState("FAILED"), Count: graphql.Int(1)},
+			},
+			want: checksStats{succeeded: 2, failed: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var rollup data.StatusCheckRollupStats
+			rollup.Contexts.CheckRunCountsByState = tt.checkRunCounts
+			rollup.Contexts.StatusContextCountsByState = tt.statusContextCounts
+
+			m := newEnrichedTestModelForChecks(t, nil)
+			got := m.getStatusCheckRollupStats(rollup)
+
+			require.Equal(t, tt.want, got)
+		})
 	}
 }

@@ -73,13 +73,16 @@ func (b *Branch) renderState() string {
 	}
 }
 
-func (b *Branch) GetStatusChecksRollup() string {
+func (b *Branch) GetStatusChecksRollup() data.PipelineStatus {
+	if b.PR == nil {
+		return ""
+	}
 	commits := b.PR.Commits.Nodes
 	if len(commits) == 0 {
-		return "UNKNOWN"
+		return ""
 	}
 
-	return string(commits[0].Commit.StatusCheckRollup.State)
+	return data.PipelineStatus(commits[0].Commit.StatusCheckRollup.State)
 }
 
 func (b *Branch) renderCiStatus() string {
@@ -87,19 +90,22 @@ func (b *Branch) renderCiStatus() string {
 		return "-"
 	}
 
-	accStatus := b.GetStatusChecksRollup()
+	accStatus := string(b.GetStatusChecksRollup())
 	ciCellStyle := b.getTextStyle()
-	if accStatus == "SUCCESS" {
+
+	switch {
+	case data.IsSuccess(accStatus):
 		ciCellStyle = ciCellStyle.Foreground(b.Ctx.Theme.SuccessText)
 		return ciCellStyle.Render(constants.SuccessIcon)
-	}
-
-	if accStatus == "PENDING" {
+	case data.IsPending(accStatus):
 		return ciCellStyle.Render(b.Ctx.Styles.Common.WaitingGlyph)
+	case data.IsFailure(accStatus):
+		ciCellStyle = ciCellStyle.Foreground(b.Ctx.Theme.ErrorText)
+		return ciCellStyle.Render(constants.FailureIcon)
+	default:
+		ciCellStyle = ciCellStyle.Foreground(b.Ctx.Theme.FaintText)
+		return ciCellStyle.Render(constants.EmptyIcon)
 	}
-
-	ciCellStyle = ciCellStyle.Foreground(b.Ctx.Theme.ErrorText)
-	return ciCellStyle.Render(constants.FailureIcon)
 }
 
 func (b *Branch) renderLines(isSelected bool) string {
@@ -130,7 +136,8 @@ func (b *Branch) renderLines(isSelected bool) string {
 				additionsText,
 				baseStyle.Render(" "),
 				deletionsText,
-			)),
+			),
+		),
 	)
 }
 
@@ -292,11 +299,13 @@ func (b *Branch) renderCommitsAheadBehind(isSelected bool) string {
 	commitsBehind := ""
 	if b.Data.CommitsAhead > 0 {
 		commitsAhead = baseStyle.Foreground(b.Ctx.Theme.WarningText).Render(
-			fmt.Sprintf(" ↑%d", b.Data.CommitsAhead))
+			fmt.Sprintf(" ↑%d", b.Data.CommitsAhead),
+		)
 	}
 	if b.Data.CommitsBehind > 0 {
 		commitsBehind = baseStyle.Foreground(b.Ctx.Theme.WarningText).Render(
-			fmt.Sprintf(" ↓%d", b.Data.CommitsBehind))
+			fmt.Sprintf(" ↓%d", b.Data.CommitsBehind),
+		)
 	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, commitsAhead, commitsBehind)
