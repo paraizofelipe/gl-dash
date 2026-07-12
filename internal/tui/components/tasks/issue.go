@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"fmt"
-	"os/exec"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -27,25 +26,19 @@ func CloseIssue(
 	issue data.RowData,
 ) tea.Cmd {
 	issueNumber := issue.GetNumber()
-	return fireTask(ctx, GitHubTask{
-		Id: fmt.Sprintf("issue_close_%d", issueNumber),
-		Args: []string{
-			"issue",
-			"close",
-			fmt.Sprint(issueNumber),
-			"-R",
-			issue.GetRepoNameWithOwner(),
-		},
-		Section:      section,
-		StartText:    fmt.Sprintf("Closing issue #%d", issueNumber),
-		FinishedText: fmt.Sprintf("Issue #%d has been closed", issueNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
+	return runMRAction(
+		ctx, section,
+		fmt.Sprintf("issue_close_%d", issueNumber),
+		fmt.Sprintf("Closing issue #%d", issueNumber),
+		fmt.Sprintf("Issue #%d has been closed", issueNumber),
+		func() (tea.Msg, error) {
+			err := data.CloseIssue(issue.GetRepoNameWithOwner(), issueNumber)
 			return UpdateIssueMsg{
 				IssueNumber: issueNumber,
 				IsClosed:    utils.BoolPtr(true),
-			}
+			}, err
 		},
-	})
+	)
 }
 
 func ReopenIssue(
@@ -54,25 +47,19 @@ func ReopenIssue(
 	issue data.RowData,
 ) tea.Cmd {
 	issueNumber := issue.GetNumber()
-	return fireTask(ctx, GitHubTask{
-		Id: fmt.Sprintf("issue_reopen_%d", issueNumber),
-		Args: []string{
-			"issue",
-			"reopen",
-			fmt.Sprint(issueNumber),
-			"-R",
-			issue.GetRepoNameWithOwner(),
-		},
-		Section:      section,
-		StartText:    fmt.Sprintf("Reopening issue #%d", issueNumber),
-		FinishedText: fmt.Sprintf("Issue #%d has been reopened", issueNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
+	return runMRAction(
+		ctx, section,
+		fmt.Sprintf("issue_reopen_%d", issueNumber),
+		fmt.Sprintf("Reopening issue #%d", issueNumber),
+		fmt.Sprintf("Issue #%d has been reopened", issueNumber),
+		func() (tea.Msg, error) {
+			err := data.ReopenIssue(issue.GetRepoNameWithOwner(), issueNumber)
 			return UpdateIssueMsg{
 				IssueNumber: issueNumber,
 				IsClosed:    utils.BoolPtr(false),
-			}
+			}, err
 		},
-	})
+	)
 }
 
 func AssignIssue(
@@ -82,36 +69,20 @@ func AssignIssue(
 	usernames []string,
 ) tea.Cmd {
 	issueNumber := issue.GetNumber()
-	args := []string{
-		"issue",
-		"edit",
-		fmt.Sprint(issueNumber),
-		"-R",
-		issue.GetRepoNameWithOwner(),
-	}
-	for _, assignee := range usernames {
-		args = append(args, "--add-assignee", assignee)
-	}
-	return fireTask(ctx, GitHubTask{
-		Id:           fmt.Sprintf("issue_assign_%d", issueNumber),
-		Args:         args,
-		Section:      section,
-		StartText:    fmt.Sprintf("Assigning issue #%d to %s", issueNumber, usernames),
-		FinishedText: fmt.Sprintf("Issue #%d has been assigned to %s", issueNumber, usernames),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			returnedAssignees := data.Assignees{Nodes: []data.Assignee{}}
-			for _, assignee := range usernames {
-				returnedAssignees.Nodes = append(
-					returnedAssignees.Nodes,
-					data.Assignee{Login: assignee},
-				)
-			}
+	return runMRAction(
+		ctx, section,
+		fmt.Sprintf("issue_assign_%d", issueNumber),
+		fmt.Sprintf("Assigning issue #%d to %s", issueNumber, usernames),
+		fmt.Sprintf("Issue #%d has been assigned to %s", issueNumber, usernames),
+		func() (tea.Msg, error) {
+			err := data.AddIssueAssignees(issue.GetRepoNameWithOwner(), issueNumber, usernames)
+			returnedAssignees := toAssignees(usernames)
 			return UpdateIssueMsg{
 				IssueNumber:    issueNumber,
 				AddedAssignees: &returnedAssignees,
-			}
+			}, err
 		},
-	})
+	)
 }
 
 func UnassignIssue(
@@ -121,36 +92,20 @@ func UnassignIssue(
 	usernames []string,
 ) tea.Cmd {
 	issueNumber := issue.GetNumber()
-	args := []string{
-		"issue",
-		"edit",
-		fmt.Sprint(issueNumber),
-		"-R",
-		issue.GetRepoNameWithOwner(),
-	}
-	for _, assignee := range usernames {
-		args = append(args, "--remove-assignee", assignee)
-	}
-	return fireTask(ctx, GitHubTask{
-		Id:           fmt.Sprintf("issue_unassign_%d", issueNumber),
-		Args:         args,
-		Section:      section,
-		StartText:    fmt.Sprintf("Unassigning %s from issue #%d", usernames, issueNumber),
-		FinishedText: fmt.Sprintf("%s unassigned from issue #%d", usernames, issueNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			returnedAssignees := data.Assignees{Nodes: []data.Assignee{}}
-			for _, assignee := range usernames {
-				returnedAssignees.Nodes = append(
-					returnedAssignees.Nodes,
-					data.Assignee{Login: assignee},
-				)
-			}
+	return runMRAction(
+		ctx, section,
+		fmt.Sprintf("issue_unassign_%d", issueNumber),
+		fmt.Sprintf("Unassigning %s from issue #%d", usernames, issueNumber),
+		fmt.Sprintf("%s unassigned from issue #%d", usernames, issueNumber),
+		func() (tea.Msg, error) {
+			err := data.RemoveIssueAssignees(issue.GetRepoNameWithOwner(), issueNumber, usernames)
+			returnedAssignees := toAssignees(usernames)
 			return UpdateIssueMsg{
 				IssueNumber:      issueNumber,
 				RemovedAssignees: &returnedAssignees,
-			}
+			}, err
 		},
-	})
+	)
 }
 
 func CommentOnIssue(
@@ -160,21 +115,13 @@ func CommentOnIssue(
 	body string,
 ) tea.Cmd {
 	issueNumber := issue.GetNumber()
-	return fireTask(ctx, GitHubTask{
-		Id: fmt.Sprintf("issue_comment_%d", issueNumber),
-		Args: []string{
-			"issue",
-			"comment",
-			fmt.Sprint(issueNumber),
-			"-R",
-			issue.GetRepoNameWithOwner(),
-			"-b",
-			body,
-		},
-		Section:      section,
-		StartText:    fmt.Sprintf("Commenting on issue #%d", issueNumber),
-		FinishedText: fmt.Sprintf("Commented on issue #%d", issueNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
+	return runMRAction(
+		ctx, section,
+		fmt.Sprintf("issue_comment_%d", issueNumber),
+		fmt.Sprintf("Commenting on issue #%d", issueNumber),
+		fmt.Sprintf("Commented on issue #%d", issueNumber),
+		func() (tea.Msg, error) {
+			err := data.CommentOnIssue(issue.GetRepoNameWithOwner(), issueNumber, body)
 			return UpdateIssueMsg{
 				IssueNumber: issueNumber,
 				NewComment: &data.IssueComment{
@@ -182,9 +129,9 @@ func CommentOnIssue(
 					Body:      body,
 					UpdatedAt: time.Now(),
 				},
-			}
+			}, err
 		},
-	})
+	)
 }
 
 func LabelIssue(
@@ -195,13 +142,6 @@ func LabelIssue(
 	existingLabels []data.Label,
 ) tea.Cmd {
 	issueNumber := issue.GetNumber()
-	args := []string{
-		"issue",
-		"edit",
-		fmt.Sprint(issueNumber),
-		"-R",
-		issue.GetRepoNameWithOwner(),
-	}
 
 	labelsMap := make(map[string]bool)
 	for _, label := range labels {
@@ -209,27 +149,26 @@ func LabelIssue(
 	}
 
 	existingLabelsColorMap := make(map[string]string)
+	var toRemove []string
 	for _, label := range existingLabels {
 		existingLabelsColorMap[label.Name] = label.Color
-	}
-
-	for _, label := range existingLabels {
 		if _, ok := labelsMap[label.Name]; !ok {
-			args = append(args, "--remove-label", label.Name)
+			toRemove = append(toRemove, label.Name)
 		}
 	}
 
-	for _, label := range labels {
-		args = append(args, "--add-label", label)
-	}
-
-	return fireTask(ctx, GitHubTask{
-		Id:           fmt.Sprintf("issue_label_%d", issueNumber),
-		Args:         args,
-		Section:      section,
-		StartText:    fmt.Sprintf("Labeling issue #%d to %s", issueNumber, labels),
-		FinishedText: fmt.Sprintf("Issue #%d has been labeled with %s", issueNumber, labels),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
+	return runMRAction(
+		ctx, section,
+		fmt.Sprintf("issue_label_%d", issueNumber),
+		fmt.Sprintf("Labeling issue #%d to %s", issueNumber, labels),
+		fmt.Sprintf("Issue #%d has been labeled with %s", issueNumber, labels),
+		func() (tea.Msg, error) {
+			err := data.UpdateIssueLabels(
+				issue.GetRepoNameWithOwner(),
+				issueNumber,
+				labels,
+				toRemove,
+			)
 			returnedLabels := data.IssueLabels{Nodes: []data.Label{}}
 			for _, label := range labels {
 				returnedLabels.Nodes = append(returnedLabels.Nodes, data.Label{
@@ -240,7 +179,7 @@ func LabelIssue(
 			return UpdateIssueMsg{
 				IssueNumber: issueNumber,
 				Labels:      &returnedLabels,
-			}
+			}, err
 		},
-	})
+	)
 }

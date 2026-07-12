@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -50,40 +48,6 @@ type UpdateBranchMsg struct {
 
 func buildTaskId(prefix string, prNumber int) string {
 	return fmt.Sprintf("%s_%d", prefix, prNumber)
-}
-
-type GitHubTask struct {
-	Id           string
-	Args         []string
-	Section      SectionIdentifier
-	StartText    string
-	FinishedText string
-	Msg          func(c *exec.Cmd, err error) tea.Msg
-}
-
-func fireTask(ctx *context.ProgramContext, task GitHubTask) tea.Cmd {
-	start := context.Task{
-		Id:           task.Id,
-		StartText:    task.StartText,
-		FinishedText: task.FinishedText,
-		State:        context.TaskStart,
-		Error:        nil,
-	}
-
-	startCmd := ctx.StartTask(start)
-	return tea.Batch(startCmd, func() tea.Msg {
-		log.Info("Running task", "cmd", "gh "+strings.Join(task.Args, " "))
-		c := exec.Command("gh", task.Args...)
-
-		err := c.Run()
-		return constants.TaskFinishedMsg{
-			TaskId:      task.Id,
-			SectionId:   task.Section.Id,
-			SectionType: task.Section.Type,
-			Err:         err,
-			Msg:         task.Msg(c, err),
-		}
-	})
 }
 
 func runMRAction(

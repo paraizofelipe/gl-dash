@@ -2,7 +2,8 @@ package tasks
 
 import (
 	"fmt"
-	"os/exec"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,45 +74,11 @@ func TestUpdateIssueMsg_Fields(t *testing.T) {
 	})
 }
 
-func TestCloseIssue(t *testing.T) {
-	tests := []struct {
-		name        string
-		issueNumber int
-		repoName    string
-	}{
-		{
-			name:        "closes issue with standard number",
-			issueNumber: 123,
-			repoName:    "owner/repo",
-		},
-		{
-			name:        "closes issue with large number",
-			issueNumber: 99999,
-			repoName:    "my-org/my-project",
-		},
-		{
-			name:        "closes issue with hyphenated repo name",
-			issueNumber: 1,
-			repoName:    "some-owner/some-repo-name",
-		},
-	}
+func TestUpdateIssueMsg_ImplementsTeaMsg(t *testing.T) {
+	var msg tea.Msg = UpdateIssueMsg{IssueNumber: 1}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := &context.ProgramContext{
-				StartTask: noopStartTask,
-			}
-			section := SectionIdentifier{Id: 1, Type: "issue"}
-			issue := mockIssue{
-				number:   tt.issueNumber,
-				repoName: tt.repoName,
-			}
-
-			cmd := CloseIssue(ctx, section, issue)
-
-			require.NotNil(t, cmd, "CloseIssue should return a non-nil command")
-		})
-	}
+	_, ok := msg.(UpdateIssueMsg)
+	require.True(t, ok, "UpdateIssueMsg should be usable as tea.Msg")
 }
 
 func TestCloseIssue_TaskConfiguration(t *testing.T) {
@@ -138,45 +105,98 @@ func TestCloseIssue_TaskConfiguration(t *testing.T) {
 	require.Nil(t, capturedTask.Error)
 }
 
-func TestReopenIssue(t *testing.T) {
+func TestCloseIssue_SectionIdentifierPropagation(t *testing.T) {
 	tests := []struct {
 		name        string
-		issueNumber int
-		repoName    string
+		sectionId   int
+		sectionType string
 	}{
-		{
-			name:        "reopens issue with standard number",
-			issueNumber: 123,
-			repoName:    "owner/repo",
-		},
-		{
-			name:        "reopens issue with large number",
-			issueNumber: 99999,
-			repoName:    "my-org/my-project",
-		},
-		{
-			name:        "reopens issue with hyphenated repo name",
-			issueNumber: 1,
-			repoName:    "some-owner/some-repo-name",
-		},
+		{name: "issue section type", sectionId: 1, sectionType: "issue"},
+		{name: "notification section type", sectionId: 10, sectionType: "notification"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &context.ProgramContext{
-				StartTask: noopStartTask,
-			}
-			section := SectionIdentifier{Id: 1, Type: "issue"}
-			issue := mockIssue{
-				number:   tt.issueNumber,
-				repoName: tt.repoName,
-			}
+			ctx := &context.ProgramContext{StartTask: noopStartTask}
+			section := SectionIdentifier{Id: tt.sectionId, Type: tt.sectionType}
+			issue := mockIssue{number: 1, repoName: "o/r"}
 
-			cmd := ReopenIssue(ctx, section, issue)
+			cmd := CloseIssue(ctx, section, issue)
 
-			require.NotNil(t, cmd, "ReopenIssue should return a non-nil command")
+			require.NotNil(t, cmd)
 		})
 	}
+}
+
+func TestCloseIssue_UsesCorrectIssueNumber(t *testing.T) {
+	issueNumbers := []int{1, 100, 12345, 999999}
+
+	for _, num := range issueNumbers {
+		t.Run(fmt.Sprintf("issue_%d", num), func(t *testing.T) {
+			var capturedTask context.Task
+			ctx := &context.ProgramContext{
+				StartTask: func(task context.Task) tea.Cmd {
+					capturedTask = task
+					return nil
+				},
+			}
+			issue := mockIssue{number: num, repoName: "o/r"}
+
+			CloseIssue(ctx, SectionIdentifier{}, issue)
+
+			expectedId := fmt.Sprintf("issue_close_%d", num)
+			require.Equal(t, expectedId, capturedTask.Id)
+			require.Contains(t, capturedTask.StartText, fmt.Sprintf("#%d", num))
+		})
+	}
+}
+
+func TestCloseIssue_Success(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	var gotMethod string
+	var gotBody map[string]any
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotBody = decodeJSONBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := CloseIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue)
+	finished := runTaskCmd(t, cmd)
+
+	require.NoError(t, finished.Err)
+	require.Equal(t, http.MethodPut, gotMethod)
+	require.Equal(t, "close", gotBody["state_event"])
+
+	msg, ok := finished.Msg.(UpdateIssueMsg)
+	require.True(t, ok)
+	require.Equal(t, 42, msg.IssueNumber)
+	require.NotNil(t, msg.IsClosed)
+	require.True(t, *msg.IsClosed)
+}
+
+func TestCloseIssue_PropagatesAPIError(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := CloseIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue)
+	finished := runTaskCmd(t, cmd)
+
+	require.Error(t, finished.Err)
 }
 
 func TestReopenIssue_TaskConfiguration(t *testing.T) {
@@ -203,62 +223,19 @@ func TestReopenIssue_TaskConfiguration(t *testing.T) {
 	require.Nil(t, capturedTask.Error)
 }
 
-func TestCloseIssue_SectionIdentifierPropagation(t *testing.T) {
-	tests := []struct {
-		name        string
-		sectionId   int
-		sectionType string
-	}{
-		{
-			name:        "issue section type",
-			sectionId:   1,
-			sectionType: "issue",
-		},
-		{
-			name:        "notification section type",
-			sectionId:   10,
-			sectionType: "notification",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := &context.ProgramContext{
-				StartTask: noopStartTask,
-			}
-			section := SectionIdentifier{Id: tt.sectionId, Type: tt.sectionType}
-			issue := mockIssue{number: 1, repoName: "o/r"}
-
-			cmd := CloseIssue(ctx, section, issue)
-
-			require.NotNil(t, cmd)
-		})
-	}
-}
-
 func TestReopenIssue_SectionIdentifierPropagation(t *testing.T) {
 	tests := []struct {
 		name        string
 		sectionId   int
 		sectionType string
 	}{
-		{
-			name:        "issue section type",
-			sectionId:   1,
-			sectionType: "issue",
-		},
-		{
-			name:        "notification section type",
-			sectionId:   10,
-			sectionType: "notification",
-		},
+		{name: "issue section type", sectionId: 1, sectionType: "issue"},
+		{name: "notification section type", sectionId: 10, sectionType: "notification"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &context.ProgramContext{
-				StartTask: noopStartTask,
-			}
+			ctx := &context.ProgramContext{StartTask: noopStartTask}
 			section := SectionIdentifier{Id: tt.sectionId, Type: tt.sectionType}
 			issue := mockIssue{number: 1, repoName: "o/r"}
 
@@ -269,211 +246,334 @@ func TestReopenIssue_SectionIdentifierPropagation(t *testing.T) {
 	}
 }
 
-func TestUpdateIssueMsg_ImplementsTeaMsg(t *testing.T) {
-	// Verify UpdateIssueMsg can be used as a tea.Msg
-	var msg tea.Msg = UpdateIssueMsg{IssueNumber: 1}
+func TestReopenIssue_Success(t *testing.T) {
+	defer data.SetRESTClient(nil)
 
-	_, ok := msg.(UpdateIssueMsg)
-	require.True(t, ok, "UpdateIssueMsg should be usable as tea.Msg")
+	var gotMethod string
+	var gotBody map[string]any
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotBody = decodeJSONBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := ReopenIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue)
+	finished := runTaskCmd(t, cmd)
+
+	require.NoError(t, finished.Err)
+	require.Equal(t, http.MethodPut, gotMethod)
+	require.Equal(t, "reopen", gotBody["state_event"])
+
+	msg, ok := finished.Msg.(UpdateIssueMsg)
+	require.True(t, ok)
+	require.Equal(t, 42, msg.IssueNumber)
+	require.NotNil(t, msg.IsClosed)
+	require.False(t, *msg.IsClosed)
 }
 
-func TestCloseIssue_UsesCorrectIssueNumber(t *testing.T) {
-	issueNumbers := []int{1, 100, 12345, 999999}
+func TestReopenIssue_PropagatesAPIError(t *testing.T) {
+	defer data.SetRESTClient(nil)
 
-	for _, num := range issueNumbers {
-		t.Run(fmt.Sprintf("issue_%d", num), func(t *testing.T) {
-			var capturedTask context.Task
-			ctx := &context.ProgramContext{
-				StartTask: func(task context.Task) tea.Cmd {
-					capturedTask = task
-					return nil
-				},
-			}
-			issue := mockIssue{number: num, repoName: "o/r"}
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	data.SetRESTClient(mockClient)
 
-			CloseIssue(ctx, SectionIdentifier{}, issue)
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
 
-			expectedId := fmt.Sprintf("issue_close_%d", num)
-			require.Equal(t, expectedId, capturedTask.Id)
-			require.Contains(t, capturedTask.StartText, fmt.Sprintf("#%d", num))
-		})
-	}
+	cmd := ReopenIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue)
+	finished := runTaskCmd(t, cmd)
+
+	require.Error(t, finished.Err)
 }
 
-func TestReopenIssue_UsesCorrectIssueNumber(t *testing.T) {
-	issueNumbers := []int{1, 100, 12345, 999999}
+func TestAssignIssue_PreservesExistingAssigneesUnion(t *testing.T) {
+	defer data.SetRESTClient(nil)
 
-	for _, num := range issueNumbers {
-		t.Run(fmt.Sprintf("issue_%d", num), func(t *testing.T) {
-			var capturedTask context.Task
-			ctx := &context.ProgramContext{
-				StartTask: func(task context.Task) tea.Cmd {
-					capturedTask = task
-					return nil
-				},
-			}
-			issue := mockIssue{number: num, repoName: "o/r"}
+	var putBody map[string]any
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/users"):
+			require.Equal(t, "bob", r.URL.Query().Get("username"))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"id":20,"username":"bob"}]`))
+		case r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":1,"assignees":[{"id":10,"username":"alice"}]}`))
+		case r.Method == http.MethodPut:
+			putBody = decodeJSONBody(t, r)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	data.SetRESTClient(mockClient)
 
-			ReopenIssue(ctx, SectionIdentifier{}, issue)
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
 
-			expectedId := fmt.Sprintf("issue_reopen_%d", num)
-			require.Equal(t, expectedId, capturedTask.Id)
-			require.Contains(t, capturedTask.StartText, fmt.Sprintf("#%d", num))
-		})
-	}
+	cmd := AssignIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue, []string{"bob"})
+	finished := runTaskCmd(t, cmd)
+
+	require.NoError(t, finished.Err)
+	require.NotNil(t, putBody)
+	require.Equal(t, []int64{10, 20}, toInt64Slice(t, putBody["assignee_ids"]))
+
+	msg, ok := finished.Msg.(UpdateIssueMsg)
+	require.True(t, ok)
+	require.NotNil(t, msg.AddedAssignees)
+	require.Equal(t, []data.Assignee{{Login: "bob"}}, msg.AddedAssignees.Nodes)
 }
 
-func TestCloseIssue_MsgCallbackReturnsCorrectUpdateIssueMsg(t *testing.T) {
-	issueNumber := 42
+func TestAssignIssue_UserNotFound_ReturnsError(t *testing.T) {
+	defer data.SetRESTClient(nil)
 
-	// Create a GitHubTask directly to test the Msg callback
-	task := GitHubTask{
-		Id: fmt.Sprintf("issue_close_%d", issueNumber),
-		Args: []string{
-			"issue",
-			"close",
-			fmt.Sprint(issueNumber),
-			"-R",
-			"owner/repo",
-		},
-		Section:      SectionIdentifier{Id: 1, Type: "issue"},
-		StartText:    fmt.Sprintf("Closing issue #%d", issueNumber),
-		FinishedText: fmt.Sprintf("Issue #%d has been closed", issueNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			return UpdateIssueMsg{
-				IssueNumber: issueNumber,
-				IsClosed:    boolPtr(true),
-			}
-		},
-	}
+	var issueEndpointHits int
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/users") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		issueEndpointHits++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	data.SetRESTClient(mockClient)
 
-	msg := task.Msg(nil, nil)
-	updateMsg, ok := msg.(UpdateIssueMsg)
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
 
-	require.True(t, ok, "Msg should return UpdateIssueMsg")
-	require.Equal(t, issueNumber, updateMsg.IssueNumber)
-	require.NotNil(t, updateMsg.IsClosed)
-	require.True(t, *updateMsg.IsClosed, "IsClosed should be true for close action")
+	cmd := AssignIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue, []string{"ghost"})
+	finished := runTaskCmd(t, cmd)
+
+	require.Error(t, finished.Err)
+	require.Contains(t, finished.Err.Error(), "gitlab user not found: ghost")
+	require.Equal(
+		t,
+		0,
+		issueEndpointHits,
+		"should fail resolving usernames before ever touching the issue",
+	)
 }
 
-func TestReopenIssue_MsgCallbackReturnsCorrectUpdateIssueMsg(t *testing.T) {
-	issueNumber := 42
+func TestAssignIssue_EmptyUsernames_ProducesEmptyAssigneeIDsPayload(t *testing.T) {
+	defer data.SetRESTClient(nil)
 
-	// Create a GitHubTask directly to test the Msg callback
-	task := GitHubTask{
-		Id: fmt.Sprintf("issue_reopen_%d", issueNumber),
-		Args: []string{
-			"issue",
-			"reopen",
-			fmt.Sprint(issueNumber),
-			"-R",
-			"owner/repo",
-		},
-		Section:      SectionIdentifier{Id: 1, Type: "issue"},
-		StartText:    fmt.Sprintf("Reopening issue #%d", issueNumber),
-		FinishedText: fmt.Sprintf("Issue #%d has been reopened", issueNumber),
-		Msg: func(c *exec.Cmd, err error) tea.Msg {
-			return UpdateIssueMsg{
-				IssueNumber: issueNumber,
-				IsClosed:    boolPtr(false),
-			}
-		},
-	}
+	var putBody map[string]any
+	var usersEndpointHits int
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "/users"):
+			usersEndpointHits++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":1,"assignees":[]}`))
+		case r.Method == http.MethodPut:
+			putBody = decodeJSONBody(t, r)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	data.SetRESTClient(mockClient)
 
-	msg := task.Msg(nil, nil)
-	updateMsg, ok := msg.(UpdateIssueMsg)
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
 
-	require.True(t, ok, "Msg should return UpdateIssueMsg")
-	require.Equal(t, issueNumber, updateMsg.IssueNumber)
-	require.NotNil(t, updateMsg.IsClosed)
-	require.False(t, *updateMsg.IsClosed, "IsClosed should be false for reopen action")
+	cmd := AssignIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue, []string{})
+	finished := runTaskCmd(t, cmd)
+
+	require.NoError(t, finished.Err)
+	require.Equal(t, 0, usersEndpointHits)
+	require.NotNil(t, putBody)
+	require.Equal(t, []int64{}, toInt64Slice(t, putBody["assignee_ids"]))
 }
 
-func TestCloseIssue_CommandArgs(t *testing.T) {
-	tests := []struct {
-		name         string
-		issueNumber  int
-		repoName     string
-		expectedArgs []string
-	}{
-		{
-			name:        "standard repo",
-			issueNumber: 123,
-			repoName:    "owner/repo",
-			expectedArgs: []string{
-				"issue", "close", "123", "-R", "owner/repo",
-			},
-		},
-		{
-			name:        "org repo with hyphens",
-			issueNumber: 456,
-			repoName:    "my-org/my-repo-name",
-			expectedArgs: []string{
-				"issue", "close", "456", "-R", "my-org/my-repo-name",
-			},
-		},
-	}
+func TestUnassignIssue_RemovesFromExistingAssignees(t *testing.T) {
+	defer data.SetRESTClient(nil)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			task := GitHubTask{
-				Args: []string{
-					"issue",
-					"close",
-					fmt.Sprint(tt.issueNumber),
-					"-R",
-					tt.repoName,
-				},
-			}
+	var putBody map[string]any
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/users"):
+			require.Equal(t, "bob", r.URL.Query().Get("username"))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"id":20,"username":"bob"}]`))
+		case r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(
+				[]byte(
+					`{"id":1,"assignees":[{"id":10,"username":"alice"},{"id":20,"username":"bob"}]}`,
+				),
+			)
+		case r.Method == http.MethodPut:
+			putBody = decodeJSONBody(t, r)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	data.SetRESTClient(mockClient)
 
-			require.Equal(t, tt.expectedArgs, task.Args)
-		})
-	}
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := UnassignIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue, []string{"bob"})
+	finished := runTaskCmd(t, cmd)
+
+	require.NoError(t, finished.Err)
+	require.NotNil(t, putBody)
+	require.Equal(t, []int64{10}, toInt64Slice(t, putBody["assignee_ids"]))
+
+	msg, ok := finished.Msg.(UpdateIssueMsg)
+	require.True(t, ok)
+	require.NotNil(t, msg.RemovedAssignees)
+	require.Equal(t, []data.Assignee{{Login: "bob"}}, msg.RemovedAssignees.Nodes)
 }
 
-func TestReopenIssue_CommandArgs(t *testing.T) {
-	tests := []struct {
-		name         string
-		issueNumber  int
-		repoName     string
-		expectedArgs []string
-	}{
-		{
-			name:        "standard repo",
-			issueNumber: 123,
-			repoName:    "owner/repo",
-			expectedArgs: []string{
-				"issue", "reopen", "123", "-R", "owner/repo",
-			},
-		},
-		{
-			name:        "org repo with hyphens",
-			issueNumber: 456,
-			repoName:    "my-org/my-repo-name",
-			expectedArgs: []string{
-				"issue", "reopen", "456", "-R", "my-org/my-repo-name",
-			},
-		},
-	}
+func TestUnassignIssue_PropagatesAPIError(t *testing.T) {
+	defer data.SetRESTClient(nil)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			task := GitHubTask{
-				Args: []string{
-					"issue",
-					"reopen",
-					fmt.Sprint(tt.issueNumber),
-					"-R",
-					tt.repoName,
-				},
-			}
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	data.SetRESTClient(mockClient)
 
-			require.Equal(t, tt.expectedArgs, task.Args)
-		})
-	}
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := UnassignIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue, []string{"bob"})
+	finished := runTaskCmd(t, cmd)
+
+	require.Error(t, finished.Err)
 }
 
-// boolPtr is a helper to create a pointer to a bool
-func boolPtr(b bool) *bool {
-	return &b
+func TestCommentOnIssue_Success(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	var postBody map[string]any
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		require.Contains(t, r.URL.Path, "/notes")
+		postBody = decodeJSONBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask, User: "tester"}
+	issue := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := CommentOnIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue, "nice catch")
+	finished := runTaskCmd(t, cmd)
+
+	require.NoError(t, finished.Err)
+	require.Equal(t, "nice catch", postBody["body"])
+
+	msg, ok := finished.Msg.(UpdateIssueMsg)
+	require.True(t, ok)
+	require.NotNil(t, msg.NewComment)
+	require.Equal(t, "nice catch", msg.NewComment.Body)
+	require.Equal(t, "tester", msg.NewComment.Author.Login)
+}
+
+func TestCommentOnIssue_PropagatesAPIError(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask, User: "tester"}
+	issue := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := CommentOnIssue(ctx, SectionIdentifier{Id: 1, Type: "issue"}, issue, "nice catch")
+	finished := runTaskCmd(t, cmd)
+
+	require.Error(t, finished.Err)
+}
+
+func TestLabelIssue_RequestPayloadAndMsg(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	var gotMethod string
+	var putBody map[string]any
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		putBody = decodeJSONBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
+	existingLabels := []data.Label{
+		{Name: "bug", Color: "ff0000"},
+		{Name: "stale", Color: "cccccc"},
+	}
+
+	cmd := LabelIssue(
+		ctx,
+		SectionIdentifier{Id: 1, Type: "issue"},
+		issue,
+		[]string{"bug", "urgent"},
+		existingLabels,
+	)
+	finished := runTaskCmd(t, cmd)
+
+	require.NoError(t, finished.Err)
+	require.Equal(t, http.MethodPut, gotMethod)
+	require.Equal(t, "bug,urgent", putBody["add_labels"])
+	require.Equal(t, "stale", putBody["remove_labels"])
+
+	msg, ok := finished.Msg.(UpdateIssueMsg)
+	require.True(t, ok)
+	require.NotNil(t, msg.Labels)
+	require.Equal(t, []data.Label{
+		{Name: "bug", Color: "ff0000"},
+		{Name: "urgent", Color: ""},
+	}, msg.Labels.Nodes)
+}
+
+func TestLabelIssue_PropagatesAPIError(t *testing.T) {
+	defer data.SetRESTClient(nil)
+
+	mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	data.SetRESTClient(mockClient)
+
+	ctx := &context.ProgramContext{StartTask: noopStartTask}
+	issue := mockIssue{number: 42, repoName: "o/r"}
+
+	cmd := LabelIssue(
+		ctx,
+		SectionIdentifier{Id: 1, Type: "issue"},
+		issue,
+		[]string{"bug"},
+		nil,
+	)
+	finished := runTaskCmd(t, cmd)
+
+	require.Error(t, finished.Err)
 }
