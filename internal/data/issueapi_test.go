@@ -788,3 +788,198 @@ func TestFetchIssue_DeclaresFullPathAsGraphQLID(t *testing.T) {
 	assert.Equal(t, "group/proj", capturedBody.Variables["fullPath"])
 	assert.Equal(t, "7", capturedBody.Variables["iid"])
 }
+
+func TestCommentsFromDiscussions(t *testing.T) {
+	updatedAt := time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC)
+
+	t.Run("note becomes an issue comment", func(t *testing.T) {
+		discussions := []gitlabDiscussionNode{
+			discussionWithNotes(gitlabNoteNode{
+				Author:    usernameAuthor("alice"),
+				Body:      "thanks for reporting",
+				UpdatedAt: updatedAt,
+				System:    false,
+			}),
+		}
+
+		comments := commentsFromDiscussions(discussions)
+
+		require.Len(t, comments.Nodes, 1)
+		assert.Equal(t, "alice", comments.Nodes[0].Author.Login)
+		assert.Equal(t, "thanks for reporting", comments.Nodes[0].Body)
+		assert.Equal(t, updatedAt, comments.Nodes[0].UpdatedAt)
+	})
+
+	t.Run("filters system notes", func(t *testing.T) {
+		discussions := []gitlabDiscussionNode{
+			discussionWithNotes(
+				gitlabNoteNode{
+					Author: usernameAuthor("ghost"),
+					Body:   "changed the label",
+					System: true,
+				},
+				gitlabNoteNode{
+					Author: usernameAuthor("alice"),
+					Body:   "real comment",
+					System: false,
+				},
+			),
+		}
+
+		comments := commentsFromDiscussions(discussions)
+
+		require.Len(t, comments.Nodes, 1)
+		assert.Equal(t, "alice", comments.Nodes[0].Author.Login)
+	})
+
+	t.Run("empty discussions returns empty comments", func(t *testing.T) {
+		comments := commentsFromDiscussions(nil)
+
+		assert.Empty(t, comments.Nodes)
+	})
+}
+
+func TestFetchIssue_PopulatesCommentsFromDiscussionNote(t *testing.T) {
+	defer SetClient(nil)
+
+	responseBody := `{"data":{"project":{"issue":{
+		"iid":"7","title":"Something broken","description":"","state":"opened",
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/issues/7",
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[
+			{"notes":{"nodes":[
+				{"author":{"username":"alice"},"body":"thanks for reporting","updatedAt":"2026-01-04T00:00:00Z","system":false}
+			]}}
+		]},
+		"upvotes":0,"downvotes":0
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+
+	issue, err := FetchIssue("https://gitlab.com/group/proj/-/issues/7")
+	require.NoError(t, err)
+
+	wantUpdatedAt, timeErr := time.Parse(time.RFC3339, "2026-01-04T00:00:00Z")
+	require.NoError(t, timeErr)
+
+	require.Len(t, issue.Comments.Nodes, 1)
+	assert.Equal(t, "alice", issue.Comments.Nodes[0].Author.Login)
+	assert.Equal(t, "thanks for reporting", issue.Comments.Nodes[0].Body)
+	assert.Equal(t, wantUpdatedAt, issue.Comments.Nodes[0].UpdatedAt)
+}
+
+func TestFetchIssue_FiltersSystemNoteFromComments(t *testing.T) {
+	defer SetClient(nil)
+
+	responseBody := `{"data":{"project":{"issue":{
+		"iid":"7","title":"Something broken","description":"","state":"opened",
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/issues/7",
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[
+			{"notes":{"nodes":[
+				{"author":{"username":"ghost"},"body":"changed the label","system":true},
+				{"author":{"username":"alice"},"body":"real comment","system":false}
+			]}}
+		]},
+		"upvotes":0,"downvotes":0
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+
+	issue, err := FetchIssue("https://gitlab.com/group/proj/-/issues/7")
+	require.NoError(t, err)
+
+	require.Len(t, issue.Comments.Nodes, 1)
+	assert.Equal(t, "alice", issue.Comments.Nodes[0].Author.Login)
+}
+
+func TestFetchIssue_ReactionsTotalCountSumsUpvotesAndDownvotes(t *testing.T) {
+	defer SetClient(nil)
+
+	responseBody := `{"data":{"project":{"issue":{
+		"iid":"7","title":"Something broken","description":"","state":"opened",
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/issues/7",
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[]},
+		"upvotes":3,"downvotes":1
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+
+	issue, err := FetchIssue("https://gitlab.com/group/proj/-/issues/7")
+	require.NoError(t, err)
+
+	assert.Equal(t, 4, issue.Reactions.TotalCount)
+}
+
+func TestFetchIssue_EmptyDiscussionsAndZeroVotesLeaveCommentsAndReactionsEmpty(t *testing.T) {
+	defer SetClient(nil)
+
+	responseBody := `{"data":{"project":{"issue":{
+		"iid":"7","title":"Something broken","description":"","state":"opened",
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/issues/7",
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[]},
+		"upvotes":0,"downvotes":0
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+
+	issue, err := FetchIssue("https://gitlab.com/group/proj/-/issues/7")
+	require.NoError(t, err)
+
+	assert.Empty(t, issue.Comments.Nodes)
+	assert.Equal(t, 0, issue.Reactions.TotalCount)
+}
+
+func TestFetchIssues_ListingQueryDoesNotDeclareDiscussionsField(t *testing.T) {
+	defer SetClient(nil)
+
+	currentUserResponseBody := `{"data":{"currentUser":{"username":"jdoe"}}}`
+	issuesResponseBody := `{"data":{"project":{"issues":{"nodes":[{
+		"iid":"7","title":"Something broken","description":"desc","state":"opened",
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/issues/7"
+	}],"count":1,"pageInfo":{"hasNextPage":false,"startCursor":"","endCursor":""}}}}}`
+
+	var capturedBody graphQLRequestBody
+	var mu sync.Mutex
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLRequestBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if strings.Contains(body.Query, "issues(") {
+			mu.Lock()
+			capturedBody = body
+			mu.Unlock()
+			_, _ = w.Write([]byte(issuesResponseBody))
+			return
+		}
+		_, _ = w.Write([]byte(currentUserResponseBody))
+	}
+
+	mockClient := newMockGraphQLClient(t, handler)
+	SetClient(mockClient)
+
+	_, err := FetchIssues("project:group/proj", 30, nil)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, capturedBody.Query)
+	assert.NotContains(t, capturedBody.Query, "discussions")
+}

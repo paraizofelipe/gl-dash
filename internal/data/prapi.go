@@ -574,6 +574,136 @@ type gitlabUserNode struct {
 	Username string
 }
 
+type gitlabNotePositionNode struct {
+	FilePath string
+	NewLine  int
+	OldLine  int
+}
+
+type gitlabNoteNode struct {
+	Author struct {
+		Username string
+	}
+	Body      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	System    bool
+	Position  *gitlabNotePositionNode
+}
+
+type gitlabDiscussionNode struct {
+	Notes struct {
+		Nodes []gitlabNoteNode
+	} `graphql:"notes(first: 100)"`
+}
+
+func diffPositionLineAndPath(p *gitlabNotePositionNode) (string, int) {
+	if p == nil {
+		return "", 0
+	}
+	line := p.NewLine
+	if line == 0 {
+		line = p.OldLine
+	}
+	return p.FilePath, line
+}
+
+func commentsAndReviewThreadsFromDiscussions(
+	discussions []gitlabDiscussionNode,
+) (CommentsWithBody, ReviewThreadsWithComments) {
+	var comments []Comment
+	var threads []struct {
+		Id           string
+		IsOutdated   bool
+		OriginalLine int
+		StartLine    int
+		Line         int
+		Path         string
+		Comments     ReviewComments `graphql:"comments(first: 20)"`
+	}
+
+	for _, discussion := range discussions {
+		var lineComments []ReviewComment
+		var path string
+		var line int
+		hasPosition := false
+
+		for _, note := range discussion.Notes.Nodes {
+			if note.System {
+				continue
+			}
+			if note.Position != nil {
+				if !hasPosition {
+					path, line = diffPositionLineAndPath(note.Position)
+					hasPosition = true
+				}
+				lineComments = append(lineComments, ReviewComment{
+					Author:    struct{ Login string }{Login: note.Author.Username},
+					Body:      note.Body,
+					UpdatedAt: note.UpdatedAt,
+					StartLine: line,
+					Line:      line,
+				})
+				continue
+			}
+			comments = append(comments, Comment{
+				Author:    struct{ Login string }{Login: note.Author.Username},
+				Body:      note.Body,
+				UpdatedAt: note.UpdatedAt,
+			})
+		}
+
+		if len(lineComments) > 0 {
+			threads = append(threads, struct {
+				Id           string
+				IsOutdated   bool
+				OriginalLine int
+				StartLine    int
+				Line         int
+				Path         string
+				Comments     ReviewComments `graphql:"comments(first: 20)"`
+			}{
+				Path:         path,
+				OriginalLine: line,
+				StartLine:    line,
+				Line:         line,
+				Comments:     ReviewComments{Nodes: lineComments, TotalCount: len(lineComments)},
+			})
+		}
+	}
+
+	return CommentsWithBody{TotalCount: graphql.Int(len(comments)), Nodes: comments},
+		ReviewThreadsWithComments{Nodes: threads}
+}
+
+func reviewsFromApprovedBy(nodes []gitlabUserNode) Reviews {
+	result := make([]Review, len(nodes))
+	for i, n := range nodes {
+		result[i] = Review{
+			Author: struct{ Login string }{Login: n.Username},
+			State:  "APPROVED",
+		}
+	}
+	return Reviews{TotalCount: len(result), Nodes: result}
+}
+
+func reviewRequestsFromReviewers(nodes []gitlabUserNode) ReviewRequests {
+	result := make([]ReviewRequestNode, len(nodes))
+	for i, n := range nodes {
+		result[i] = ReviewRequestNode{
+			RequestedReviewer: struct {
+				User      RequestedReviewerUser      `graphql:"... on User"`
+				Team      RequestedReviewerTeam      `graphql:"... on Team"`
+				Bot       RequestedReviewerBot       `graphql:"... on Bot"`
+				Mannequin RequestedReviewerMannequin `graphql:"... on Mannequin"`
+			}{
+				User: RequestedReviewerUser{Login: n.Username},
+			},
+		}
+	}
+	return ReviewRequests{TotalCount: len(result), Nodes: result}
+}
+
 func convertLabelNodes(nodes []gitlabLabelNode) []Label {
 	converted := make([]Label, len(nodes))
 	for i, n := range nodes {
@@ -982,6 +1112,19 @@ func parseMergeRequestUrl(mrUrl string) (fullPath string, iid string, err error)
 	return before, after, nil
 }
 
+type mergeRequestActivityNode struct {
+	mergeRequestNode
+	Discussions struct {
+		Nodes []gitlabDiscussionNode
+	} `graphql:"discussions(first: 50)"`
+	ApprovedBy struct {
+		Nodes []gitlabUserNode
+	} `graphql:"approvedBy(first: 50)"`
+	Reviewers struct {
+		Nodes []gitlabUserNode
+	} `graphql:"reviewers(first: 50)"`
+}
+
 func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
 	fullPath, iid, err := parseMergeRequestUrl(prUrl)
 	if err != nil {
@@ -995,7 +1138,7 @@ func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
 
 	var queryResult struct {
 		Project struct {
-			MergeRequest mergeRequestNode `graphql:"mergeRequest(iid: $iid)"`
+			MergeRequest mergeRequestActivityNode `graphql:"mergeRequest(iid: $iid)"`
 		} `graphql:"project(fullPath: $fullPath)"`
 	}
 	variables := map[string]any{
@@ -1009,7 +1152,14 @@ func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
 	}
 	log.Info("Successfully fetched PR", "url", prUrl)
 
-	enriched := queryResult.Project.MergeRequest.toEnrichedPullRequestData(fullPath)
+	mr := queryResult.Project.MergeRequest
+	enriched := mr.toEnrichedPullRequestData(fullPath)
+	enriched.Comments, enriched.ReviewThreads = commentsAndReviewThreadsFromDiscussions(
+		mr.Discussions.Nodes,
+	)
+	enriched.Reviews = reviewsFromApprovedBy(mr.ApprovedBy.Nodes)
+	enriched.ReviewRequests = reviewRequestsFromReviewers(mr.Reviewers.Nodes)
+	enriched.SuggestedReviewers = nil
 	enriched.Pipeline = fetchPipelineBestEffort(fullPath, iid)
 	return enriched, nil
 }

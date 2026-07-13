@@ -2293,3 +2293,520 @@ func TestFetchPipelineBestEffort(t *testing.T) {
 		},
 	)
 }
+
+func TestDiffPositionLineAndPath(t *testing.T) {
+	t.Run("nil position returns empty path and zero line", func(t *testing.T) {
+		path, line := diffPositionLineAndPath(nil)
+
+		assert.Equal(t, "", path)
+		assert.Equal(t, 0, line)
+	})
+
+	t.Run("non zero new line is used as the line", func(t *testing.T) {
+		path, line := diffPositionLineAndPath(&gitlabNotePositionNode{
+			FilePath: "main.go",
+			NewLine:  10,
+			OldLine:  5,
+		})
+
+		assert.Equal(t, "main.go", path)
+		assert.Equal(t, 10, line)
+	})
+
+	t.Run("falls back to old line when new line is zero", func(t *testing.T) {
+		path, line := diffPositionLineAndPath(&gitlabNotePositionNode{
+			FilePath: "main.go",
+			NewLine:  0,
+			OldLine:  7,
+		})
+
+		assert.Equal(t, "main.go", path)
+		assert.Equal(t, 7, line)
+	})
+}
+
+func TestCommentsAndReviewThreadsFromDiscussions(t *testing.T) {
+	updatedAt := time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC)
+
+	t.Run("note without position becomes a top level comment", func(t *testing.T) {
+		discussions := []gitlabDiscussionNode{
+			discussionWithNotes(gitlabNoteNode{
+				Author:    usernameAuthor("alice"),
+				Body:      "LGTM",
+				UpdatedAt: updatedAt,
+				System:    false,
+			}),
+		}
+
+		comments, threads := commentsAndReviewThreadsFromDiscussions(discussions)
+
+		require.Len(t, comments.Nodes, 1)
+		assert.Equal(t, "alice", comments.Nodes[0].Author.Login)
+		assert.Equal(t, "LGTM", comments.Nodes[0].Body)
+		assert.Equal(t, updatedAt, comments.Nodes[0].UpdatedAt)
+		assert.Empty(t, threads.Nodes)
+	})
+
+	t.Run("note with position becomes a review thread comment", func(t *testing.T) {
+		discussions := []gitlabDiscussionNode{
+			discussionWithNotes(gitlabNoteNode{
+				Author:    usernameAuthor("bob"),
+				Body:      "fix this",
+				UpdatedAt: updatedAt,
+				System:    false,
+				Position: &gitlabNotePositionNode{
+					FilePath: "main.go",
+					NewLine:  10,
+				},
+			}),
+		}
+
+		comments, threads := commentsAndReviewThreadsFromDiscussions(discussions)
+
+		assert.Empty(t, comments.Nodes)
+		require.Len(t, threads.Nodes, 1)
+		thread := threads.Nodes[0]
+		assert.Equal(t, "main.go", thread.Path)
+		assert.Equal(t, 10, thread.Line)
+		assert.Equal(t, 10, thread.OriginalLine)
+		assert.Equal(t, 10, thread.StartLine)
+		require.Len(t, thread.Comments.Nodes, 1)
+		reviewComment := thread.Comments.Nodes[0]
+		assert.Equal(t, "bob", reviewComment.Author.Login)
+		assert.Equal(t, "fix this", reviewComment.Body)
+		assert.Equal(t, updatedAt, reviewComment.UpdatedAt)
+		assert.Equal(t, 10, reviewComment.StartLine)
+		assert.Equal(t, 10, reviewComment.Line)
+	})
+
+	t.Run("review thread falls back to old line when new line is zero", func(t *testing.T) {
+		discussions := []gitlabDiscussionNode{
+			discussionWithNotes(gitlabNoteNode{
+				Author:    usernameAuthor("bob"),
+				Body:      "fix this",
+				UpdatedAt: updatedAt,
+				System:    false,
+				Position: &gitlabNotePositionNode{
+					FilePath: "main.go",
+					NewLine:  0,
+					OldLine:  9,
+				},
+			}),
+		}
+
+		_, threads := commentsAndReviewThreadsFromDiscussions(discussions)
+
+		require.Len(t, threads.Nodes, 1)
+		assert.Equal(t, 9, threads.Nodes[0].Line)
+		assert.Equal(t, 9, threads.Nodes[0].OriginalLine)
+		assert.Equal(t, 9, threads.Nodes[0].StartLine)
+	})
+
+	t.Run("filters system notes from both comments and review threads", func(t *testing.T) {
+		discussions := []gitlabDiscussionNode{
+			discussionWithNotes(
+				gitlabNoteNode{
+					Author: usernameAuthor("ghost"),
+					Body:   "closed this merge request",
+					System: true,
+				},
+				gitlabNoteNode{
+					Author: usernameAuthor("ghost"),
+					Body:   "changed the description",
+					System: true,
+					Position: &gitlabNotePositionNode{
+						FilePath: "main.go",
+						NewLine:  3,
+					},
+				},
+				gitlabNoteNode{
+					Author: usernameAuthor("alice"),
+					Body:   "real comment",
+					System: false,
+				},
+			),
+		}
+
+		comments, threads := commentsAndReviewThreadsFromDiscussions(discussions)
+
+		require.Len(t, comments.Nodes, 1)
+		assert.Equal(t, "alice", comments.Nodes[0].Author.Login)
+		assert.Empty(t, threads.Nodes)
+	})
+
+	t.Run("empty discussions returns empty comments and review threads", func(t *testing.T) {
+		comments, threads := commentsAndReviewThreadsFromDiscussions(nil)
+
+		assert.Empty(t, comments.Nodes)
+		assert.Empty(t, threads.Nodes)
+	})
+}
+
+func TestReviewsFromApprovedBy(t *testing.T) {
+	t.Run("maps each approved by user to an approved review", func(t *testing.T) {
+		reviews := reviewsFromApprovedBy([]gitlabUserNode{
+			{Username: "carol"},
+			{Username: "dave"},
+		})
+
+		require.Len(t, reviews.Nodes, 2)
+		assert.Equal(t, "carol", reviews.Nodes[0].Author.Login)
+		assert.Equal(t, "APPROVED", reviews.Nodes[0].State)
+		assert.Equal(t, "dave", reviews.Nodes[1].Author.Login)
+		assert.Equal(t, "APPROVED", reviews.Nodes[1].State)
+		assert.Equal(t, 2, reviews.TotalCount)
+	})
+
+	t.Run("empty nodes returns empty reviews", func(t *testing.T) {
+		reviews := reviewsFromApprovedBy(nil)
+
+		assert.Empty(t, reviews.Nodes)
+		assert.Equal(t, 0, reviews.TotalCount)
+	})
+}
+
+func TestReviewRequestsFromReviewers(t *testing.T) {
+	t.Run("maps each reviewer to a requested reviewer user", func(t *testing.T) {
+		requests := reviewRequestsFromReviewers([]gitlabUserNode{{Username: "erin"}})
+
+		require.Len(t, requests.Nodes, 1)
+		node := requests.Nodes[0]
+		assert.Equal(t, "erin", node.RequestedReviewer.User.Login)
+		assert.Equal(t, "erin", node.GetReviewerDisplayName())
+		assert.False(t, node.AsCodeOwner)
+		assert.Empty(t, node.RequestedReviewer.Team.Slug)
+		assert.Empty(t, node.RequestedReviewer.Bot.Login)
+		assert.Empty(t, node.RequestedReviewer.Mannequin.Login)
+	})
+
+	t.Run("empty nodes returns empty review requests", func(t *testing.T) {
+		requests := reviewRequestsFromReviewers(nil)
+
+		assert.Empty(t, requests.Nodes)
+	})
+}
+
+func TestFetchPullRequest_PopulatesCommentsFromDiscussionNoteWithoutPosition(t *testing.T) {
+	defer SetClient(nil)
+	defer SetRESTClient(nil)
+
+	responseBody := `{"data":{"project":{"mergeRequest":{
+		"iid":"42","title":"Fix bug","state":"opened","draft":false,
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+		"sourceBranch":"feature-x","targetBranch":"main",
+		"detailedMergeStatus":"MERGEABLE","approved":true,
+		"diffStatsSummary":{"additions":10,"deletions":2},
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[
+			{"notes":{"nodes":[
+				{"author":{"username":"alice"},"body":"LGTM","createdAt":"2026-01-03T00:00:00Z","updatedAt":"2026-01-04T00:00:00Z","system":false,"position":null}
+			]}}
+		]},
+		"approvedBy":{"nodes":[]},
+		"reviewers":{"nodes":[]}
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+	SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
+
+	pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+	require.NoError(t, err)
+
+	wantUpdatedAt, timeErr := time.Parse(time.RFC3339, "2026-01-04T00:00:00Z")
+	require.NoError(t, timeErr)
+
+	require.Len(t, pr.Comments.Nodes, 1)
+	assert.Equal(t, "alice", pr.Comments.Nodes[0].Author.Login)
+	assert.Equal(t, "LGTM", pr.Comments.Nodes[0].Body)
+	assert.Equal(t, wantUpdatedAt, pr.Comments.Nodes[0].UpdatedAt)
+	assert.Empty(t, pr.ReviewThreads.Nodes)
+}
+
+func TestFetchPullRequest_PopulatesReviewThreadFromDiscussionNoteWithPosition(t *testing.T) {
+	defer SetClient(nil)
+	defer SetRESTClient(nil)
+
+	responseBody := `{"data":{"project":{"mergeRequest":{
+		"iid":"42","title":"Fix bug","state":"opened","draft":false,
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+		"sourceBranch":"feature-x","targetBranch":"main",
+		"detailedMergeStatus":"MERGEABLE","approved":true,
+		"diffStatsSummary":{"additions":10,"deletions":2},
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[
+			{"notes":{"nodes":[
+				{"author":{"username":"bob"},"body":"fix this","createdAt":"2026-01-03T00:00:00Z","updatedAt":"2026-01-04T00:00:00Z","system":false,
+				 "position":{"filePath":"main.go","newLine":10,"oldLine":0}}
+			]}}
+		]},
+		"approvedBy":{"nodes":[]},
+		"reviewers":{"nodes":[]}
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+	SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
+
+	pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+	require.NoError(t, err)
+
+	assert.Empty(t, pr.Comments.Nodes)
+	require.Len(t, pr.ReviewThreads.Nodes, 1)
+	thread := pr.ReviewThreads.Nodes[0]
+	assert.Equal(t, "main.go", thread.Path)
+	assert.Equal(t, 10, thread.Line)
+	require.Len(t, thread.Comments.Nodes, 1)
+	assert.Equal(t, "bob", thread.Comments.Nodes[0].Author.Login)
+	assert.Equal(t, "fix this", thread.Comments.Nodes[0].Body)
+	assert.Equal(t, 10, thread.Comments.Nodes[0].StartLine)
+	assert.Equal(t, 10, thread.Comments.Nodes[0].Line)
+}
+
+func TestFetchPullRequest_FiltersSystemNoteFromCommentsAndReviewThreads(t *testing.T) {
+	defer SetClient(nil)
+	defer SetRESTClient(nil)
+
+	responseBody := `{"data":{"project":{"mergeRequest":{
+		"iid":"42","title":"Fix bug","state":"opened","draft":false,
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+		"sourceBranch":"feature-x","targetBranch":"main",
+		"detailedMergeStatus":"MERGEABLE","approved":true,
+		"diffStatsSummary":{"additions":10,"deletions":2},
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[
+			{"notes":{"nodes":[
+				{"author":{"username":"ghost"},"body":"changed the description","system":true,"position":null},
+				{"author":{"username":"ghost"},"body":"resolved a thread","system":true,"position":{"filePath":"main.go","newLine":3,"oldLine":0}}
+			]}}
+		]},
+		"approvedBy":{"nodes":[]},
+		"reviewers":{"nodes":[]}
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+	SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
+
+	pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+	require.NoError(t, err)
+
+	assert.Empty(t, pr.Comments.Nodes)
+	assert.Empty(t, pr.ReviewThreads.Nodes)
+}
+
+func TestFetchPullRequest_PopulatesReviewsFromApprovedByWithTwoUsers(t *testing.T) {
+	defer SetClient(nil)
+	defer SetRESTClient(nil)
+
+	responseBody := `{"data":{"project":{"mergeRequest":{
+		"iid":"42","title":"Fix bug","state":"opened","draft":false,
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+		"sourceBranch":"feature-x","targetBranch":"main",
+		"detailedMergeStatus":"MERGEABLE","approved":true,
+		"diffStatsSummary":{"additions":10,"deletions":2},
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[]},
+		"approvedBy":{"nodes":[{"username":"carol"},{"username":"dave"}]},
+		"reviewers":{"nodes":[]}
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+	SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
+
+	pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+	require.NoError(t, err)
+
+	require.Len(t, pr.Reviews.Nodes, 2)
+	assert.Equal(t, "carol", pr.Reviews.Nodes[0].Author.Login)
+	assert.Equal(t, "APPROVED", pr.Reviews.Nodes[0].State)
+	assert.Equal(t, "dave", pr.Reviews.Nodes[1].Author.Login)
+	assert.Equal(t, "APPROVED", pr.Reviews.Nodes[1].State)
+	assert.Equal(t, 2, pr.Reviews.TotalCount)
+}
+
+func TestFetchPullRequest_PopulatesReviewRequestsFromReviewersWithOneUser(t *testing.T) {
+	defer SetClient(nil)
+	defer SetRESTClient(nil)
+
+	responseBody := `{"data":{"project":{"mergeRequest":{
+		"iid":"42","title":"Fix bug","state":"opened","draft":false,
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+		"sourceBranch":"feature-x","targetBranch":"main",
+		"detailedMergeStatus":"MERGEABLE","approved":true,
+		"diffStatsSummary":{"additions":10,"deletions":2},
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[]},
+		"approvedBy":{"nodes":[]},
+		"reviewers":{"nodes":[{"username":"erin"}]}
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+	SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
+
+	pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+	require.NoError(t, err)
+
+	require.Len(t, pr.ReviewRequests.Nodes, 1)
+	assert.Equal(t, "erin", pr.ReviewRequests.Nodes[0].RequestedReviewer.User.Login)
+	assert.Equal(t, "erin", pr.ReviewRequests.Nodes[0].GetReviewerDisplayName())
+}
+
+func TestFetchPullRequest_EmptyDiscussionsApprovedByAndReviewersLeaveActivityFieldsEmpty(
+	t *testing.T,
+) {
+	defer SetClient(nil)
+	defer SetRESTClient(nil)
+
+	responseBody := `{"data":{"project":{"mergeRequest":{
+		"iid":"42","title":"Fix bug","state":"opened","draft":false,
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+		"sourceBranch":"feature-x","targetBranch":"main",
+		"detailedMergeStatus":"MERGEABLE","approved":true,
+		"diffStatsSummary":{"additions":10,"deletions":2},
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[]},
+		"approvedBy":{"nodes":[]},
+		"reviewers":{"nodes":[]}
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+	SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
+
+	pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+	require.NoError(t, err)
+
+	assert.Empty(t, pr.Comments.Nodes)
+	assert.Empty(t, pr.ReviewThreads.Nodes)
+	assert.Empty(t, pr.Reviews.Nodes)
+	assert.Equal(t, 0, pr.Reviews.TotalCount)
+	assert.Empty(t, pr.ReviewRequests.Nodes)
+}
+
+func TestFetchPullRequest_SuggestedReviewersStaysEmptyWhenActivityIsPopulated(t *testing.T) {
+	defer SetClient(nil)
+	defer SetRESTClient(nil)
+
+	responseBody := `{"data":{"project":{"mergeRequest":{
+		"iid":"42","title":"Fix bug","state":"opened","draft":false,
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+		"sourceBranch":"feature-x","targetBranch":"main",
+		"detailedMergeStatus":"MERGEABLE","approved":true,
+		"diffStatsSummary":{"additions":10,"deletions":2},
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[
+			{"notes":{"nodes":[
+				{"author":{"username":"alice"},"body":"LGTM","updatedAt":"2026-01-04T00:00:00Z","system":false}
+			]}}
+		]},
+		"approvedBy":{"nodes":[{"username":"carol"}]},
+		"reviewers":{"nodes":[{"username":"erin"}]}
+	}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+	SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
+
+	pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+	require.NoError(t, err)
+
+	require.NotEmpty(t, pr.Comments.Nodes)
+	require.NotEmpty(t, pr.Reviews.Nodes)
+	require.NotEmpty(t, pr.ReviewRequests.Nodes)
+	assert.Empty(t, pr.SuggestedReviewers)
+}
+
+func TestFetchPullRequest_QueryDeclaresDiscussionsApprovedByAndReviewers(t *testing.T) {
+	defer SetClient(nil)
+	defer SetRESTClient(nil)
+
+	responseBody := `{"data":{"project":{"mergeRequest":{
+		"iid":"42","title":"Fix bug","state":"opened","draft":false,
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+		"sourceBranch":"feature-x","targetBranch":"main",
+		"detailedMergeStatus":"MERGEABLE","approved":true,
+		"diffStatsSummary":{"additions":10,"deletions":2},
+		"labels":{"nodes":[]},
+		"discussions":{"nodes":[]},
+		"approvedBy":{"nodes":[]},
+		"reviewers":{"nodes":[]}
+	}}}}`
+
+	var capturedBody graphQLRequestBody
+	var mu sync.Mutex
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLRequestBody(t, r)
+		mu.Lock()
+		capturedBody = body
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(responseBody))
+	}
+
+	mockClient := newMockGraphQLClient(t, handler)
+	SetClient(mockClient)
+	SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
+
+	_, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, capturedBody.Query)
+	assert.Contains(t, capturedBody.Query, "discussions")
+	assert.Contains(t, capturedBody.Query, "approvedBy")
+	assert.Contains(t, capturedBody.Query, "reviewers")
+}
+
+func TestFetchPullRequests_ListingQueryDoesNotDeclareDiscussionsApprovedByOrReviewers(
+	t *testing.T,
+) {
+	defer SetClient(nil)
+
+	var capturedBody graphQLRequestBody
+	var mu sync.Mutex
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLRequestBody(t, r)
+		mu.Lock()
+		capturedBody = body
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(singleMergeRequestProjectScopedResponse))
+	}
+
+	mockClient := newMockGraphQLClient(t, handler)
+	SetClient(mockClient)
+
+	_, err := FetchPullRequests("project:group/proj", 30, nil)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, capturedBody.Query)
+	assert.NotContains(t, capturedBody.Query, "discussions")
+	assert.NotContains(t, capturedBody.Query, "approvedBy")
+	assert.NotContains(t, capturedBody.Query, "reviewers")
+}

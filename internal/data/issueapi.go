@@ -275,6 +275,32 @@ func parseIssueUrl(issueUrl string) (fullPath string, iid string, err error) {
 	return before, after, nil
 }
 
+type issueActivityNode struct {
+	issueNode
+	Discussions struct {
+		Nodes []gitlabDiscussionNode
+	} `graphql:"discussions(first: 50)"`
+	Upvotes   int
+	Downvotes int
+}
+
+func commentsFromDiscussions(discussions []gitlabDiscussionNode) IssueComments {
+	var comments []IssueComment
+	for _, discussion := range discussions {
+		for _, note := range discussion.Notes.Nodes {
+			if note.System {
+				continue
+			}
+			comments = append(comments, IssueComment{
+				Author:    struct{ Login string }{Login: note.Author.Username},
+				Body:      note.Body,
+				UpdatedAt: note.UpdatedAt,
+			})
+		}
+	}
+	return IssueComments{Nodes: comments, TotalCount: len(comments)}
+}
+
 func FetchIssue(issueUrl string) (IssueData, error) {
 	fullPath, iid, err := parseIssueUrl(issueUrl)
 	if err != nil {
@@ -288,7 +314,7 @@ func FetchIssue(issueUrl string) (IssueData, error) {
 
 	var queryResult struct {
 		Project struct {
-			Issue issueNode `graphql:"issue(iid: $iid)"`
+			Issue issueActivityNode `graphql:"issue(iid: $iid)"`
 		} `graphql:"project(fullPath: $fullPath)"`
 	}
 	variables := map[string]any{
@@ -302,5 +328,9 @@ func FetchIssue(issueUrl string) (IssueData, error) {
 	}
 	log.Info("Successfully fetched Issue", "url", issueUrl)
 
-	return queryResult.Project.Issue.toIssueData(fullPath), nil
+	issue := queryResult.Project.Issue
+	issueData := issue.toIssueData(fullPath)
+	issueData.Comments = commentsFromDiscussions(issue.Discussions.Nodes)
+	issueData.Reactions = IssueReactions{TotalCount: issue.Upvotes + issue.Downvotes}
+	return issueData, nil
 }

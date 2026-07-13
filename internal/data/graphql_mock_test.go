@@ -56,3 +56,13 @@ func captureLogOutput(t *testing.T) *bytes.Buffer {
 	})
 	return &buf
 }
+
+func usernameAuthor(username string) struct{ Username string } {
+	return struct{ Username string }{Username: username}
+}
+
+func discussionWithNotes(notes ...gitlabNoteNode) gitlabDiscussionNode {
+	var d gitlabDiscussionNode
+	d.Notes.Nodes = notes
+	return d
+}
