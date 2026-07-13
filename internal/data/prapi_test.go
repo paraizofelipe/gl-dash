@@ -1434,6 +1434,53 @@ func TestFetchPullRequest(t *testing.T) {
 		assert.Equal(t, Assignee{Login: "bob"}, pr.Assignees.Nodes[1])
 	})
 
+	t.Run("populates files changed from diffStats", func(t *testing.T) {
+		defer SetClient(nil)
+		defer SetRESTClient(nil)
+
+		responseBody := `{"data":{"project":{"mergeRequest":{
+			"iid":"42","title":"Fix bug","state":"opened","draft":false,
+			"author":{"username":"jdoe"},
+			"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+			"webUrl":"https://gitlab.com/group/proj/-/merge_requests/42",
+			"sourceBranch":"feature-x","targetBranch":"main",
+			"detailedMergeStatus":"MERGEABLE","approved":false,
+			"diffStatsSummary":{"additions":10,"deletions":9},
+			"labels":{"nodes":[]},
+			"diffStats":[
+				{"path":"main.go","additions":10,"deletions":2},
+				{"path":"internal/data/prapi.go","additions":0,"deletions":7}
+			],
+			"commits":{"nodes":[
+				{"sha":"abc123","title":"Fix the bug","webUrl":"https://gitlab.com/group/proj/-/commit/abc123",
+				 "authoredDate":"2026-01-01T08:30:00Z","author":{"username":"jdoe"},"authorName":"John Doe"},
+				{"sha":"def456","title":"External commit","webUrl":"https://gitlab.com/group/proj/-/commit/def456",
+				 "authoredDate":"2026-01-01T09:00:00Z","authorName":"Jane External"}
+			]}
+		}}}}`
+
+		mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+		SetClient(mockClient)
+		SetRESTClient(newMockRESTClient(t, staticJSONHandler(http.StatusNotFound, "")))
+
+		pr, err := FetchPullRequest("https://gitlab.com/group/proj/-/merge_requests/42")
+		require.NoError(t, err)
+
+		require.Len(t, pr.Files.Nodes, 2)
+		assert.Equal(t, 2, pr.Files.TotalCount)
+		assert.Equal(t, "main.go", pr.Files.Nodes[0].Path)
+		assert.Equal(t, 10, pr.Files.Nodes[0].Additions)
+		assert.Equal(t, 2, pr.Files.Nodes[0].Deletions)
+		assert.Equal(t, "internal/data/prapi.go", pr.Files.Nodes[1].Path)
+		assert.Equal(t, 7, pr.Files.Nodes[1].Deletions)
+
+		require.Len(t, pr.Commits, 2)
+		assert.Equal(t, "abc123", pr.Commits[0].Sha)
+		assert.Equal(t, "Fix the bug", pr.Commits[0].Title)
+		assert.Equal(t, "jdoe", pr.Commits[0].Author)
+		assert.Equal(t, "Jane External", pr.Commits[1].Author)
+	})
+
 	t.Run("propagates error when the server responds with http 500", func(t *testing.T) {
 		defer SetClient(nil)
 
@@ -2342,6 +2389,68 @@ func TestMergeRequestNodeNormalizesState(t *testing.T) {
 			assert.Equal(t, want, n.toEnrichedPullRequestData("").State)
 		})
 	}
+}
+
+func TestCommitsFromNodes(t *testing.T) {
+	authoredAt := time.Date(2026, 1, 4, 8, 30, 0, 0, time.UTC)
+
+	t.Run("maps each commit node preferring the GitLab author username", func(t *testing.T) {
+		commits := commitsFromNodes([]gitlabCommitNode{
+			{
+				Sha:          "abc123",
+				Title:        "Fix the bug",
+				WebUrl:       "https://gitlab.com/group/proj/-/commit/abc123",
+				AuthoredDate: authoredAt,
+				Author:       struct{ Username string }{Username: "jdoe"},
+				AuthorName:   "John Doe",
+			},
+		})
+
+		require.Len(t, commits, 1)
+		assert.Equal(t, "abc123", commits[0].Sha)
+		assert.Equal(t, "Fix the bug", commits[0].Title)
+		assert.Equal(t, "jdoe", commits[0].Author)
+		assert.Equal(t, authoredAt, commits[0].CreatedAt)
+		assert.Equal(t, "https://gitlab.com/group/proj/-/commit/abc123", commits[0].Url)
+	})
+
+	t.Run("falls back to authorName when no GitLab user is linked", func(t *testing.T) {
+		commits := commitsFromNodes([]gitlabCommitNode{
+			{Sha: "def456", Title: "External commit", AuthorName: "Jane External"},
+		})
+
+		require.Len(t, commits, 1)
+		assert.Equal(t, "Jane External", commits[0].Author)
+	})
+
+	t.Run("empty nodes returns empty commits", func(t *testing.T) {
+		assert.Empty(t, commitsFromNodes(nil))
+	})
+}
+
+func TestChangedFilesFromDiffStats(t *testing.T) {
+	t.Run("maps each diff stat to a changed file", func(t *testing.T) {
+		files := changedFilesFromDiffStats([]gitlabDiffStatNode{
+			{Path: "main.go", Additions: 10, Deletions: 2},
+			{Path: "internal/data/prapi.go", Additions: 0, Deletions: 7},
+		})
+
+		require.Len(t, files.Nodes, 2)
+		assert.Equal(t, 2, files.TotalCount)
+		assert.Equal(t, "main.go", files.Nodes[0].Path)
+		assert.Equal(t, 10, files.Nodes[0].Additions)
+		assert.Equal(t, 2, files.Nodes[0].Deletions)
+		assert.Equal(t, "internal/data/prapi.go", files.Nodes[1].Path)
+		assert.Equal(t, 0, files.Nodes[1].Additions)
+		assert.Equal(t, 7, files.Nodes[1].Deletions)
+	})
+
+	t.Run("empty diff stats returns empty changed files", func(t *testing.T) {
+		files := changedFilesFromDiffStats(nil)
+
+		assert.Empty(t, files.Nodes)
+		assert.Equal(t, 0, files.TotalCount)
+	})
 }
 
 func TestCommentsAndReviewThreadsFromDiscussions(t *testing.T) {

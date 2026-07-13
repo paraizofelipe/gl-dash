@@ -62,6 +62,7 @@ type EnrichedPullRequestData struct {
 	Reviews            Reviews                   `graphql:"reviews(last: 100)"`
 	SuggestedReviewers []SuggestedReviewer
 	Files              ChangedFiles `graphql:"files(first: 20)"`
+	Commits            []PullRequestCommit
 	Pipeline           MergeRequestPipeline
 }
 
@@ -249,6 +250,17 @@ type ChangedFile struct {
 type ChangedFiles struct {
 	TotalCount int
 	Nodes      []ChangedFile
+}
+
+// PullRequestCommit is a single commit shown in the MR Commits tab. GitLab
+// merge requests expose commits via GraphQL, unlike the GitHub-only Commits
+// type above which the migration left unused.
+type PullRequestCommit struct {
+	Sha       string
+	Title     string
+	Author    string
+	CreatedAt time.Time
+	Url       string
 }
 
 type RequestedReviewerUser struct {
@@ -684,6 +696,62 @@ func commentsAndReviewThreadsFromDiscussions(
 
 	return CommentsWithBody{TotalCount: graphql.Int(len(comments)), Nodes: comments},
 		ReviewThreadsWithComments{Nodes: threads}
+}
+
+type gitlabDiffStatNode struct {
+	Path      string
+	Additions int
+	Deletions int
+}
+
+type gitlabCommitNode struct {
+	Sha          string
+	Title        string
+	WebUrl       string
+	AuthoredDate time.Time
+	Author       struct {
+		Username string
+	}
+	AuthorName string
+}
+
+// commitsFromNodes maps GitLab's merge request commit nodes into the
+// PullRequestCommit shape the Commits tab renders. It prefers the linked
+// GitLab user's username and falls back to the raw authorName for commits
+// authored by someone without a GitLab account.
+func commitsFromNodes(nodes []gitlabCommitNode) []PullRequestCommit {
+	commits := make([]PullRequestCommit, len(nodes))
+	for i, n := range nodes {
+		author := n.Author.Username
+		if author == "" {
+			author = n.AuthorName
+		}
+		commits[i] = PullRequestCommit{
+			Sha:       n.Sha,
+			Title:     n.Title,
+			Author:    author,
+			CreatedAt: n.AuthoredDate,
+			Url:       n.WebUrl,
+		}
+	}
+	return commits
+}
+
+// changedFilesFromDiffStats maps GitLab's per-file diffStats
+// ({ path, additions, deletions }) into the ChangedFiles shape the Files
+// Changed tab renders. GitLab's diffStats carries no change-type flag
+// (added/deleted/renamed), so ChangeType is left empty and the row shows no
+// type glyph.
+func changedFilesFromDiffStats(nodes []gitlabDiffStatNode) ChangedFiles {
+	files := make([]ChangedFile, len(nodes))
+	for i, n := range nodes {
+		files[i] = ChangedFile{
+			Path:      n.Path,
+			Additions: n.Additions,
+			Deletions: n.Deletions,
+		}
+	}
+	return ChangedFiles{TotalCount: len(files), Nodes: files}
 }
 
 func reviewsFromApprovedBy(nodes []gitlabUserNode) Reviews {
@@ -1152,6 +1220,10 @@ type mergeRequestActivityNode struct {
 	Reviewers struct {
 		Nodes []gitlabUserNode
 	} `graphql:"reviewers(first: 50)"`
+	DiffStats []gitlabDiffStatNode `graphql:"diffStats"`
+	Commits   struct {
+		Nodes []gitlabCommitNode
+	} `graphql:"commits(first: 100)"`
 }
 
 func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
@@ -1188,6 +1260,8 @@ func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
 	)
 	enriched.Reviews = reviewsFromApprovedBy(mr.ApprovedBy.Nodes)
 	enriched.ReviewRequests = reviewRequestsFromReviewers(mr.Reviewers.Nodes)
+	enriched.Files = changedFilesFromDiffStats(mr.DiffStats)
+	enriched.Commits = commitsFromNodes(mr.Commits.Nodes)
 	enriched.SuggestedReviewers = nil
 	enriched.Pipeline = fetchPipelineBestEffort(fullPath, iid)
 	return enriched, nil

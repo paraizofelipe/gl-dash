@@ -40,7 +40,7 @@ func (m *Model) renderChangesOverview() string {
 				lipgloss.JoinHorizontal(
 					lipgloss.Top,
 					lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(" "),
-					fmt.Sprintf("%d commits", commitsNotYetPopulated),
+					fmt.Sprintf("%d commits", len(m.pr.Data.Enriched.Commits)),
 					" ",
 					lipgloss.NewStyle().
 						Foreground(m.ctx.Theme.FaintText).
