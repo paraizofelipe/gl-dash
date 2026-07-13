@@ -13,28 +13,25 @@ tasks:
   build:
     desc: Build
     cmds:
-      - go build .
+      - go build -o gl-dash .
 
   uninstall:
-    desc: Uninstall from the gh extensions
-    cmd: |
-      if gh ext list | grep --quiet 'gh dash'; then echo "🕐 Uninstalling..."; gh ext remove dash; fi
-      exit 0
+    desc: Remove the gl-dash binary from $GOPATH/bin
+    cmd: rm -f "$(go env GOPATH)/bin/gl-dash"
 
   install:
-    desc: Install the local app as a gh extension
+    desc: Install the local build into $GOPATH/bin
     cmds:
-      - task: build
       - task: uninstall
-      - echo "🕐 Installing local build..." && gh ext install .
-      - gh dash --version
+      - go build -o "$(go env GOPATH)/bin/gl-dash" .
+      - gl-dash --version
 
   install:prod:
-    desc: Install the latest available version as a gh extension
+    desc: Install the latest released version into $GOPATH/bin
     cmds:
       - task: uninstall
-      - echo "🕐 Installing latest version..." && gh ext install dlvhdr/gh-dash
-      - gh dash --version
+      - curl -fsSL "https://gitlab.com/<GROUP>/gl-dash/-/releases/permalink/latest/downloads/gl-dash_$(go env GOOS)-$(go env GOARCH)" -o "$(go env GOPATH)/bin/gl-dash" && chmod +x "$(go env GOPATH)/bin/gl-dash"
+      - gl-dash --version
 
   debug:
     desc: Run in debug mode. Run `task logs` to watch the logs.

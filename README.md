@@ -1,6 +1,6 @@
 <br />
 <p align="center">
-  <a  class="underline: none;" href="https://gh-dash.dev">
+  <a  class="underline: none;" href="https://gl-dash.dev">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="./docs/public/logo.png">
       <img alt="Text changing depending on mode. Light: 'So light!' Dark: 'So dark!'" width="600" src="./docs/public/logo-light.png">
@@ -9,13 +9,13 @@
 </p>
 
 <p align="center">
-    <a href="https://gh-dash.dev" target="_blank">→ https://gh-dash.dev ←</a>
+    <a href="https://gl-dash.dev" target="_blank">→ https://gl-dash.dev ←</a>
 </p>
 <p align="center">
-  A rich terminal UI for GitHub that doesn't break your flow.
+  A rich terminal UI for GitLab that doesn't break your flow.
   <br />
   <br />
-  <a href="https://github.com/dlvhdr/gh-dash/releases"><img src="https://img.shields.io/github/release/dlvhdr/gh-dash.svg" alt="Latest Release"></a>
+  <a href="https://gitlab.com/<GROUP>/gl-dash/-/releases"><img src="https://img.shields.io/badge/release-latest-blue" alt="Latest Release"></a>
   <a href="https://discord.gg/SXNXp9NctV"><img src="https://img.shields.io/discord/1413193703476035755?label=discord" alt="Discord"/></a>
   <a href="https://github.com/sponsors/dlvhdr"><img src=https://img.shields.io/github/sponsors/dlvhdr?logo=githubsponsors&color=EA4AAA /></a>
   <a href="https://www.jetify.com/docs/devbox" alt="Built with Devbox"><img src="https://www.jetify.com/img/devbox/shield_moon.svg" /></a>
@@ -88,7 +88,7 @@ If you like quickly navigating with your keyboard, seeing the PRs and issues you
 
 ## 📃 Docs
 
-`DASH` has an extensive docs site at [gh-dash.dev/getting-started](https://gh-dash.dev/getting-started).
+`DASH` has an extensive docs site at [gl-dash.dev/getting-started](https://gl-dash.dev/getting-started).
 
 ## 👥 Discord
 
@@ -96,7 +96,7 @@ Have questions? Join our [Discord community](https://discord.gg/SXNXp9NctV)!
 
 ## 🙏 Contributing
 
-See the contribution guide at [https://www.gh-dash.dev/contributing](https://www.gh-dash.dev/contributing/).
+See the contribution guide at [https://www.gl-dash.dev/contributing](https://www.gl-dash.dev/contributing/).
 
 ## 🛞 Under the hood
 
@@ -107,9 +107,11 @@ See the contribution guide at [https://www.gh-dash.dev/contributing](https://www
 - [glamour](https://github.com/charmbracelet/glamour) for rendering markdown
 - [vhs](https://github.com/charmbracelet/vhs) for generating the GIF
 - [cobra](https://github.com/spf13/cobra) for the CLI
-- [gh](https://github.com/cli/cli) for the GitHub functionality
+- [gitlab client-go](https://gitlab.com/gitlab-org/api/client-go) for the GitLab functionality
 - [delta](https://github.com/dandavison/delta) for viewing PR diffs
 
 ## Authors
 
-Dolev Hadar ([@dlvhdr](https://github.com/dlvhdr)) and the [community](https://github.com/dlvhdr/gh-dash/graphs/contributors).
+Dolev Hadar ([@dlvhdr](https://github.com/dlvhdr)) and the original project's contributors. `gl-dash` is a GitLab-focused fork — see the [community][05] maintaining it.
+
+[05]: https://gitlab.com/<GROUP>/gl-dash/-/graphs/main

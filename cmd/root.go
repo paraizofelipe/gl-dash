@@ -43,33 +43,33 @@ var (
 	logo = lipgloss.NewStyle().Foreground(dctx.LogoColor).MarginBottom(1).SetString(constants.Logo)
 
 	rootCmd = &cobra.Command{
-		Use: "gh dash",
+		Use: "gl-dash",
 		Long: lipgloss.JoinVertical(
 			lipgloss.Left,
 			logo.Render(),
-			"A rich terminal UI for GitHub that doesn't break your flow.",
+			"A rich terminal UI for GitLab that doesn't break your flow.",
 			"",
 			lipgloss.NewStyle().
 				Faint(true).
 				Italic(true).
-				Render("Visit https://gh-dash.dev for the docs."),
+				Render("Visit https://gl-dash.dev for the docs."),
 		),
-		Short:   "A rich terminal UI for GitHub that doesn't break your flow.",
+		Short:   "A rich terminal UI for GitLab that doesn't break your flow.",
 		Version: "",
 		Example: `
 # Running without arguments will either:
 #   - Use the global configuration file
-#   - Use a local .gh-dash.yml file if in a git repo
-gh dash
+#   - Use a local .gl-dash.yml file if in a git repo
+gl-dash
 
 # Run with a specific configuration file
-gh dash --config /path/to/configuration/file.yml
+gl-dash --config /path/to/configuration/file.yml
 
 # Run with debug logging to debug.log
-gh dash --debug
+gl-dash --debug
 
 # Print version
-gh dash -v
+gl-dash -v
 	`,
 		Args: cobra.MaximumNArgs(1),
 	}
@@ -146,9 +146,9 @@ func init() {
 		"",
 		`use this configuration file
 (default lookup:
-  1. a .gh-dash.yml file if inside a git repo
-  2. $GH_DASH_CONFIG env var
-  3. $XDG_CONFIG_HOME/gh-dash/config.yml
+  1. a .gl-dash.yml file if inside a git repo
+  2. $GL_DASH_CONFIG env var
+  3. $XDG_CONFIG_HOME/gl-dash/config.yml
 )`,
 	)
 	err := rootCmd.MarkPersistentFlagFilename("config", "yaml", "yml")
@@ -162,7 +162,7 @@ func init() {
 			lipgloss.Left,
 			"",
 			logo.Render(),
-			`gh-dash {{printf "version %s\n" .Version}}`,
+			`gl-dash {{printf "version %s\n" .Version}}`,
 		),
 	)
 
@@ -182,7 +182,7 @@ func init() {
 		"help",
 		"h",
 		false,
-		"help for gh-dash",
+		"help for gl-dash",
 	)
 
 	rootCmd.Run = func(_ *cobra.Command, args []string) {

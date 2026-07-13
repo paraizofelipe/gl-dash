@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	gh "github.com/cli/go-gh/v2/pkg/api"
+	graphql "github.com/cli/shurcooL-graphql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +17,7 @@ func TestResolveGithubClient_ConcurrentAccess(t *testing.T) {
 
 	const n = 50
 	var wg sync.WaitGroup
-	results := make([]*gh.GraphQLClient, n)
+	results := make([]*graphql.Client, n)
 	errs := make([]error, n)
 	start := make(chan struct{})
 	for i := range n {

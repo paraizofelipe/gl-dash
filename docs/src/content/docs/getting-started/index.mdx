@@ -2,25 +2,19 @@
 title: Installation
 ---
 
-Get started using `dash` to review and manage your GitHub work items.
+Get started using `dash` to review and manage your GitLab work items.
 
 ## Recommended Steps
 
-1. Install the `gh` CLI
+1. Download the latest binary for your platform from the [releases page][01]:
 
    ```bash
-   brew install gh # e.g. if on macOS
+   curl -fsSL "https://gitlab.com/GROUP/gl-dash/-/releases/permalink/latest/downloads/gl-dash_$(go env GOOS)-$(go env GOARCH)" -o gl-dash
+   chmod +x gl-dash
+   sudo mv gl-dash /usr/local/bin/gl-dash
    ```
 
-   Or, see the [installation instructions][01] for other platforms.
-
-2. Install this extension:
-
-   ```sh
-   gh extension install dlvhdr/gh-dash
-   ```
-
-3. To get the icons to render properly, you should download and install a [Nerd font][02]. Then,
+2. To get the icons to render properly, you should download and install a [Nerd font][02]. Then,
    select that font as your font for your terminal of choice.
 
    ```bash
@@ -44,31 +38,30 @@ see [these dotfiles][n04].
 
 ---
 
-## Manual Steps
+## Building From Source
 
-If you want to install this extension **manually**, follow these steps:
+If you'd rather build `gl-dash` yourself, follow these steps:
 
 1. Clone the repo
 
    ```bash
-   # git
-   git clone https://github.com/dlvhdr/gh-dash
-
-   # GitHub CLI
-   gh repo clone dlvhdr/gh-dash
+   git clone https://gitlab.com/GROUP/gl-dash.git
    ```
 
 2. `cd` into it
 
    ```bash
-   cd gh-dash
+   cd gl-dash
    ```
 
-3. Install it locally
+3. Build it locally
 
    ```bash
-   gh extension install .
+   go build -o gl-dash .
    ```
 
-[01]: https://github.com/cli/cli#installation
+Coming from `gh-dash`? See [Migrating from gh-dash][03].
+
+[01]: https://gitlab.com/GROUP/gl-dash/-/releases
 [02]: https://www.nerdfonts.com/
+[03]: /getting-started/migrating-from-gh-dash/

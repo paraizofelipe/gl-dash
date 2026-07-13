@@ -31,7 +31,7 @@ var conf = koanf.Conf{
 	StrictMerge: true,
 }
 
-const DashDir = "gh-dash"
+const DashDir = "gl-dash"
 
 const ConfigYmlFileName = "config.yml"
 
@@ -528,7 +528,7 @@ Create one under: %s
 Example of a config.yml file:
 %s
 
-For more info, go to https://github.com/dlvhdr/gh-dash
+For more info, go to https://gl-dash.dev
 press q to exit.
 
 Original error: %v`,
@@ -612,8 +612,8 @@ func (parser ConfigParser) getProvidedConfigPath(location Location) string {
 	// First try the provided --config flag
 	if location.ConfigFlag != "" {
 		userProvidedCfgPath = location.ConfigFlag
-	} else if cfg := os.Getenv("GH_DASH_CONFIG"); cfg != "" {
-		// then try the GH_DASH_CONFIG env var
+	} else if cfg := os.Getenv("GL_DASH_CONFIG"); cfg != "" {
+		// then try the GL_DASH_CONFIG env var
 		userProvidedCfgPath = cfg
 	} else if location.RepoPath != "" {
 		// Then try to see if we're currently in a git repo

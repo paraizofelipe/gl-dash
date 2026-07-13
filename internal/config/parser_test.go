@@ -19,11 +19,11 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/testutils"
 )
 
-// See https://www.gh-dash.dev/configuration/#_top
+// See https://www.gl-dash.dev/configuration/#_top
 //  1. get default config file or create it if it's missing
-//     1.1. try GH_DASH_CONFIG
+//     1.1. try GL_DASH_CONFIG
 //     1.2. then check if we're in a git repo
-//     1.2.1. try both `.gh-dash.yml` and `.gh-dash.yaml`
+//     1.2.1. try both `.gl-dash.yml` and `.gl-dash.yaml`
 //     1.3. try to look under `XDG_CONFIG_HOME`
 //     1.4. if not, try with `os.UserHomeDir()`
 //     1.5. if still doesn't exist, create with defaults
@@ -60,7 +60,7 @@ func TestParser(t *testing.T) {
 		defer func() {
 			os.Unsetenv("XDG_CONFIG_HOME")
 		}()
-		t.Setenv("GH_DASH_CONFIG", "")
+		t.Setenv("GL_DASH_CONFIG", "")
 
 		parsed, err := ParseConfig(Location{})
 		testutils.AssertNoError(t, err)
@@ -84,7 +84,7 @@ func TestParser(t *testing.T) {
 		require.Equal(t, "#E2E1ED", parsed.Theme.Colors.Inline.Text.Primary.String())
 	})
 
-	t.Run("Should then try GH_DASH_CONFIG env var", func(t *testing.T) {
+	t.Run("Should then try GL_DASH_CONFIG env var", func(t *testing.T) {
 		clearXDGEnv := setXDGConfigHomeEnvVar(t, "testdata")
 		defer clearXDGEnv()
 		clearEnv := setupConfigEnvVar(t)
@@ -119,7 +119,7 @@ func TestParser(t *testing.T) {
 		clearEnv := setXDGConfigHomeEnvVar(t, "testdata")
 		defer clearEnv()
 
-		// parse config in ./testdata/gh-dash/config.yml
+		// parse config in ./testdata/gl-dash/config.yml
 		actual, err := ParseConfig(Location{})
 		testutils.AssertNoError(t, err)
 
@@ -149,7 +149,7 @@ func TestParser(t *testing.T) {
 		clearEnv := setXDGConfigHomeEnvVar(t, "testdata")
 		defer clearEnv()
 
-		// merge with config in ./testdata/gh-dash/config.yml
+		// merge with config in ./testdata/gl-dash/config.yml
 		cwd := Testwd(t)
 		actual, err := ParseConfig(Location{
 			ConfigFlag: path.Join(cwd, "./testdata/other-test-config.yml"),
@@ -267,8 +267,8 @@ func TestValidateColor(t *testing.T) {
 func setupConfigEnvVar(t *testing.T) func() {
 	t.Helper()
 	cwd := Testwd(t)
-	os.Setenv("GH_DASH_CONFIG", path.Join(cwd, "testdata/other-test-config.yml"))
+	os.Setenv("GL_DASH_CONFIG", path.Join(cwd, "testdata/other-test-config.yml"))
 	return func() {
-		os.Unsetenv("GH_DASH_CONFIG")
+		os.Unsetenv("GL_DASH_CONFIG")
 	}
 }

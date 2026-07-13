@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	graphql "github.com/cli/shurcooL-graphql"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
@@ -13,7 +12,6 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
-	checks "github.com/dlvhdr/x/gh-checks"
 )
 
 type checksTestOptions struct {
@@ -345,70 +343,5 @@ func TestViewChecksBar_NarrowWidth_NoPanic(t *testing.T) {
 		require.NotPanics(t, func() {
 			m.viewChecksBar()
 		}, "viewChecksBar panicked with width=%d", width)
-	}
-}
-
-func TestGetStatusCheckRollupStats(t *testing.T) {
-	tests := []struct {
-		name                string
-		checkRunCounts      []data.ContextCountByState
-		statusContextCounts []data.ContextCountByState
-		want                checksStats
-	}{
-		{
-			name: "success and failed states populate their buckets",
-			checkRunCounts: []data.ContextCountByState{
-				{State: checks.CheckRunState("success"), Count: graphql.Int(3)},
-				{State: checks.CheckRunState("failed"), Count: graphql.Int(2)},
-			},
-			want: checksStats{succeeded: 3, failed: 2},
-		},
-		{
-			name: "running and skipped states populate their buckets",
-			checkRunCounts: []data.ContextCountByState{
-				{State: checks.CheckRunState("running"), Count: graphql.Int(4)},
-				{State: checks.CheckRunState("skipped"), Count: graphql.Int(1)},
-			},
-			want: checksStats{inProgress: 4, skipped: 1},
-		},
-		{
-			name: "canceled state populates the neutral bucket",
-			checkRunCounts: []data.ContextCountByState{
-				{State: checks.CheckRunState("canceled"), Count: graphql.Int(5)},
-			},
-			want: checksStats{neutral: 5},
-		},
-		{
-			name: "check run and status context counts are aggregated together",
-			checkRunCounts: []data.ContextCountByState{
-				{State: checks.CheckRunState("success"), Count: graphql.Int(2)},
-			},
-			statusContextCounts: []data.ContextCountByState{
-				{State: checks.CheckRunState("success"), Count: graphql.Int(1)},
-				{State: checks.CheckRunState("failed"), Count: graphql.Int(3)},
-			},
-			want: checksStats{succeeded: 3, failed: 3},
-		},
-		{
-			name: "uppercase graphql-style state values are normalized before matching",
-			checkRunCounts: []data.ContextCountByState{
-				{State: checks.CheckRunState("SUCCESS"), Count: graphql.Int(2)},
-				{State: checks.CheckRunState("FAILED"), Count: graphql.Int(1)},
-			},
-			want: checksStats{succeeded: 2, failed: 1},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var rollup data.StatusCheckRollupStats
-			rollup.Contexts.CheckRunCountsByState = tt.checkRunCounts
-			rollup.Contexts.StatusContextCountsByState = tt.statusContextCounts
-
-			m := newEnrichedTestModelForChecks(t, nil)
-			got := m.getStatusCheckRollupStats(rollup)
-
-			require.Equal(t, tt.want, got)
-		})
 	}
 }

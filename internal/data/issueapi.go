@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"charm.land/log/v2"
 	graphql "github.com/cli/shurcooL-graphql"
-	"github.com/shurcooL/githubv4"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
@@ -261,31 +261,46 @@ type IssuesResponse struct {
 	PageInfo   PageInfo
 }
 
-// FetchIssue fetches a single issue by its GitHub URL
+func parseIssueUrl(issueUrl string) (fullPath string, iid string, err error) {
+	parsedUrl, err := url.Parse(issueUrl)
+	if err != nil {
+		return "", "", err
+	}
+	const sep = "/-/issues/"
+	path := strings.TrimPrefix(parsedUrl.Path, "/")
+	before, after, found := strings.Cut(path, sep)
+	if !found || before == "" || after == "" {
+		return "", "", fmt.Errorf("not an issue URL: %s", issueUrl)
+	}
+	return before, after, nil
+}
+
 func FetchIssue(issueUrl string) (IssueData, error) {
-	c, err := resolveGithubClient()
+	fullPath, iid, err := parseIssueUrl(issueUrl)
+	if err != nil {
+		return IssueData{}, err
+	}
+
+	c, err := resolveGraphQLClient()
 	if err != nil {
 		return IssueData{}, err
 	}
 
 	var queryResult struct {
-		Resource struct {
-			Issue IssueData `graphql:"... on Issue"`
-		} `graphql:"resource(url: $url)"`
-	}
-	parsedUrl, err := url.Parse(issueUrl)
-	if err != nil {
-		return IssueData{}, err
+		Project struct {
+			Issue issueNode `graphql:"issue(iid: $iid)"`
+		} `graphql:"project(fullPath: $fullPath)"`
 	}
 	variables := map[string]any{
-		"url": githubv4.URI{URL: parsedUrl},
+		"fullPath": graphql.ID(fullPath),
+		"iid":      graphql.String(iid),
 	}
 	log.Debug("Fetching Issue", "url", issueUrl)
-	err = c.Query("FetchIssue", &queryResult, variables)
+	err = c.QueryNamed(context.Background(), "FetchIssue", &queryResult, variables)
 	if err != nil {
 		return IssueData{}, err
 	}
 	log.Info("Successfully fetched Issue", "url", issueUrl)
 
-	return queryResult.Resource.Issue, nil
+	return queryResult.Project.Issue.toIssueData(fullPath), nil
 }

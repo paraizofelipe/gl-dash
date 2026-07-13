@@ -6,12 +6,12 @@ import astroBrokenLinksChecker from "astro-broken-links-checker";
 
 import node from "@astrojs/node";
 
-const ogUrl = new URL("og.png", "https://gh-dash.dev/").href;
-const ogImageAlt = "DASH Through Your GitHub";
+const ogUrl = new URL("og.png", "https://gl-dash.dev/").href;
+const ogImageAlt = "DASH Through Your GitLab";
 
 // https://astro.build/config
 export default defineConfig({
-  site: "https://gh-dash.dev",
+  site: "https://gl-dash.dev",
   integrations: [
     astroBrokenLinksChecker({
       logFilePath: "broken-links.log",
@@ -35,7 +35,7 @@ export default defineConfig({
           attrs: {
             name: "description",
             content:
-              "DASH - a rich terminal UI for GitHub that doesn't break your flow",
+              "DASH - a rich terminal UI for GitLab that doesn't break your flow",
           },
         },
       ],
@@ -44,9 +44,9 @@ export default defineConfig({
       },
       social: [
         {
-          icon: "github",
-          label: "GitHub",
-          href: "https://github.com/dlvhdr/gh-dash",
+          icon: "gitlab",
+          label: "GitLab",
+          href: "https://gitlab.com/<GROUP>/gl-dash",
         },
       ],
       sidebar: [

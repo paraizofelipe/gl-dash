@@ -13,7 +13,6 @@ import (
 
 	"charm.land/log/v2"
 	graphql "github.com/cli/shurcooL-graphql"
-	checks "github.com/dlvhdr/x/gh-checks"
 	gitlabapi "gitlab.com/gitlab-org/api/client-go"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
@@ -57,12 +56,10 @@ type EnrichedPullRequestData struct {
 	Labels             PRLabels  `graphql:"labels(first: 6)"`
 	Assignees          Assignees `graphql:"assignees(first: 3)"`
 	Repository         Repository
-	Commits            LastCommitWithStatusChecks `graphql:"commits(last: 1)"`
-	AllCommits         AllCommits                 `graphql:"allCommits: commits(last: 100)"`
-	Comments           CommentsWithBody           `graphql:"comments(last: 50, orderBy: { field: UPDATED_AT, direction: DESC })"`
-	ReviewThreads      ReviewThreadsWithComments  `graphql:"reviewThreads(last: 50)"`
-	ReviewRequests     ReviewRequests             `graphql:"reviewRequests(last: 100)"`
-	Reviews            Reviews                    `graphql:"reviews(last: 100)"`
+	Comments           CommentsWithBody          `graphql:"comments(last: 50, orderBy: { field: UPDATED_AT, direction: DESC })"`
+	ReviewThreads      ReviewThreadsWithComments `graphql:"reviewThreads(last: 50)"`
+	ReviewRequests     ReviewRequests            `graphql:"reviewRequests(last: 100)"`
+	Reviews            Reviews                   `graphql:"reviews(last: 100)"`
 	SuggestedReviewers []SuggestedReviewer
 	Files              ChangedFiles `graphql:"files(first: 20)"`
 	Pipeline           MergeRequestPipeline
@@ -114,118 +111,11 @@ type LastCommitStatus struct {
 	}
 }
 
-type CheckRun struct {
-	Name       graphql.String
-	Status     graphql.String
-	Conclusion checks.CheckRunState
-	CheckSuite struct {
-		Creator struct {
-			Login graphql.String
-		}
-		WorkflowRun struct {
-			Workflow struct {
-				Name graphql.String
-			}
-		}
-	}
-}
-
-type StatusContext struct {
-	Context graphql.String
-	State   graphql.String
-	Creator struct {
-		Login graphql.String
-	}
-}
-
-type CheckSuiteNode struct {
-	Status     graphql.String
-	Conclusion graphql.String
-
-	App struct {
-		Name graphql.String
-	}
-
-	WorkflowRun struct {
-		Workflow struct {
-			Name graphql.String
-		}
-	}
-}
-
-type CheckSuites struct {
-	TotalCount graphql.Int
-	Nodes      []CheckSuiteNode
-}
-
-type StatusCheckRollupStats struct {
-	State    checks.CommitState
-	Contexts struct {
-		TotalCount                 graphql.Int
-		CheckRunCount              graphql.Int
-		CheckRunCountsByState      []ContextCountByState
-		StatusContextCount         graphql.Int
-		StatusContextCountsByState []ContextCountByState
-	} `graphql:"contexts(last: 1)"`
-}
-
-type AllCommits struct {
-	Nodes []struct {
-		Commit struct {
-			AbbreviatedOid  string
-			CommittedDate   time.Time
-			MessageHeadline string
-			Author          struct {
-				Name string
-				User struct {
-					Login string
-				}
-			}
-			StatusCheckRollup StatusCheckRollupStats
-		}
-	}
-}
-
-type LastCommitWithStatusChecks struct {
-	Nodes []struct {
-		Commit struct {
-			Deployments struct {
-				Nodes []struct {
-					Task        graphql.String
-					Description graphql.String
-				}
-			} `graphql:"deployments(last: 10)"`
-			CommitUrl         graphql.String
-			StatusCheckRollup struct {
-				State    graphql.String
-				Contexts struct {
-					TotalCount                 graphql.Int
-					CheckRunCount              graphql.Int
-					CheckRunCountsByState      []ContextCountByState
-					StatusContextCount         graphql.Int
-					StatusContextCountsByState []ContextCountByState
-					Nodes                      []struct {
-						Typename      graphql.String `graphql:"__typename"`
-						CheckRun      CheckRun       `graphql:"... on CheckRun"`
-						StatusContext StatusContext  `graphql:"... on StatusContext"`
-					}
-				} `graphql:"contexts(last: 100)"`
-			}
-			// CheckSuites are fetched separately from StatusCheckRollup because
-			// workflows awaiting approval (conclusion ACTION_REQUIRED) and workflows
-			// still queued have no CheckRun objects yet, so they don’t appear in
-			// StatusCheckRollup.contexts.
-			CheckSuites CheckSuites `graphql:"checkSuites(last: 20)"`
-		}
-	}
-	TotalCount int
-}
-
 // GitLab has no server-side "counts by state" for jobs (unlike GitHub's
 // StatusCheckRollup.Contexts.*CountsByState) — PipelineJob/MergeRequestPipeline
-// and CountJobsByState replace CheckRun/StatusContext/ContextCountByState for
-// the GitLab side. The GitHub-specific types above are kept untouched until
-// their last production consumer is migrated off them.
+// and CountJobsByState are the GitLab-native replacement for the GitHub-only
+// CheckRun/StatusContext/StatusCheckRollupStats/ContextCountByState types
+// (removed along with the GitHub checks adapter dependency they relied on).
 type PipelineJob struct {
 	ID           int64
 	Name         string
@@ -268,11 +158,6 @@ func CountJobsByState(jobs []PipelineJob) []JobCountByState {
 type CommentsWithBody struct {
 	TotalCount graphql.Int
 	Nodes      []Comment
-}
-
-type ContextCountByState = struct {
-	Count graphql.Int
-	State checks.CheckRunState
 }
 
 type Commits struct {

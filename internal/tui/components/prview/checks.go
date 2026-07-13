@@ -482,31 +482,6 @@ type checksStats struct {
 	awaitingApproval int
 }
 
-func (m *Model) getStatusCheckRollupStats(rollup data.StatusCheckRollupStats) checksStats {
-	var res checksStats
-	allChecks := make([]data.ContextCountByState, 0)
-	allChecks = append(allChecks, rollup.Contexts.CheckRunCountsByState...)
-	allChecks = append(allChecks, rollup.Contexts.StatusContextCountsByState...)
-
-	for _, count := range allChecks {
-		state := strings.ToLower(string(count.State))
-		switch {
-		case data.IsPending(state):
-			res.inProgress += int(count.Count)
-		case data.IsFailure(state):
-			res.failed += int(count.Count)
-		case data.IsSkipped(state):
-			res.skipped += int(count.Count)
-		case data.IsNeutral(state):
-			res.neutral += int(count.Count)
-		case data.IsSuccess(state):
-			res.succeeded += int(count.Count)
-		}
-	}
-
-	return res
-}
-
 func (m *Model) getChecksStats() checksStats {
 	var res checksStats
 	for _, job := range m.pr.Data.Enriched.Pipeline.Jobs {

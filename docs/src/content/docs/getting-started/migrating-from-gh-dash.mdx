@@ -1,0 +1,46 @@
+---
+title: Migrating from gh-dash
+---
+
+`gl-dash` is a GitLab-focused fork of [`gh-dash`](https://github.com/dlvhdr/gh-dash). It keeps
+the same terminal UI and configuration model, but talks to GitLab instead of GitHub, and no
+longer runs as a `gh` extension — it's a standalone binary.
+
+If you used to run `gh-dash`, here's what changed:
+
+|                      | `gh-dash`                                              | `gl-dash`                                                   |
+| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------- |
+| Command              | `gh dash`                                              | `gl-dash`                                                   |
+| Local config file    | `.gh-dash.yml`                                         | `.gl-dash.yml`                                              |
+| Global config file   | `$XDG_CONFIG_HOME/gh-dash/config.yml`                  | `$XDG_CONFIG_HOME/gl-dash/config.yml`                       |
+| Config path override | `$GH_DASH_CONFIG`                                      | `$GL_DASH_CONFIG`                                           |
+| Installation         | `gh` extension (`gh extension install dlvhdr/gh-dash`) | standalone binary, see [Installation][01]                   |
+| Authentication       | `gh auth login`                                        | `glab auth login`, or `GITLAB_TOKEN`/`GITLAB_HOST` env vars |
+
+## Steps to migrate
+
+1. Rename your config file, or point `$GL_DASH_CONFIG` at its existing location:
+
+   ```bash
+   mv ~/.config/gh-dash/config.yml ~/.config/gl-dash/config.yml
+   # or, for a per-repo config:
+   mv .gh-dash.yml .gl-dash.yml
+   ```
+
+2. If you had `GH_DASH_CONFIG` set in your shell profile, rename it to `GL_DASH_CONFIG`.
+3. [Install][01] the `gl-dash` binary and remove the old extension:
+
+   ```bash
+   gh extension remove dash
+   ```
+
+4. Make sure GitLab authentication is available, either via `glab auth login` or by setting
+   `GITLAB_TOKEN` (and `GITLAB_HOST`, for self-managed instances).
+
+The configuration schema itself (sections, layout, keybindings, theme) is unchanged, so an
+existing `gh-dash` config keeps working after the rename — just review any qualifiers you use in
+your section filters, since GitLab's search syntax doesn't map 1:1 to GitHub's. See
+[Searching][02] for details.
+
+[01]: /getting-started/
+[02]: /configuration/searching/

@@ -588,3 +588,203 @@ func TestFetchIssues_UnscopedSearchReturnsErrorWhenAnonymous(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, "cannot resolve current user for an unscoped issue search", err.Error())
 }
+
+func TestParseIssueUrl(t *testing.T) {
+	tests := []struct {
+		name        string
+		url         string
+		wantPath    string
+		wantIid     string
+		expectError bool
+	}{
+		{
+			name:     "valid url with a nested subgroup",
+			url:      "https://gitlab.com/group/subgroup/proj/-/issues/42",
+			wantPath: "group/subgroup/proj",
+			wantIid:  "42",
+		},
+		{
+			name:     "valid url with a single level namespace",
+			url:      "https://gitlab.com/group/proj/-/issues/7",
+			wantPath: "group/proj",
+			wantIid:  "7",
+		},
+		{
+			name:        "url without an issues segment returns an error",
+			url:         "https://gitlab.com/group/proj",
+			expectError: true,
+		},
+		{
+			name:        "malformed url returns an error",
+			url:         "https://gitlab.com/group/proj/-/issues/42\x00",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fullPath, iid, err := parseIssueUrl(tt.url)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPath, fullPath)
+			assert.Equal(t, tt.wantIid, iid)
+		})
+	}
+}
+
+func TestFetchIssue(t *testing.T) {
+	t.Run("maps a single issue to IssueData", func(t *testing.T) {
+		defer SetClient(nil)
+
+		responseBody := `{"data":{"project":{"issue":{
+			"iid":"7","title":"Something broken","description":"desc","state":"opened",
+			"author":{"username":"jdoe"},
+			"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+			"webUrl":"https://gitlab.com/group/proj/-/issues/7",
+			"labels":{"nodes":[{"title":"bug","color":"#ff0000","description":"Bug label"}]}
+		}}}}`
+
+		mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+		SetClient(mockClient)
+
+		issue, err := FetchIssue("https://gitlab.com/group/proj/-/issues/7")
+		require.NoError(t, err)
+
+		wantCreatedAt, timeErr := time.Parse(time.RFC3339, "2026-01-01T00:00:00Z")
+		require.NoError(t, timeErr)
+		wantUpdatedAt, timeErr := time.Parse(time.RFC3339, "2026-01-02T00:00:00Z")
+		require.NoError(t, timeErr)
+
+		assert.Equal(t, 7, issue.Number)
+		assert.Equal(t, "Something broken", issue.Title)
+		assert.Equal(t, "desc", issue.Body)
+		assert.Equal(t, "opened", issue.State)
+		assert.Equal(t, "jdoe", issue.Author.Login)
+		assert.Equal(t, wantCreatedAt, issue.CreatedAt)
+		assert.Equal(t, wantUpdatedAt, issue.UpdatedAt)
+		assert.Equal(t, "https://gitlab.com/group/proj/-/issues/7", issue.Url)
+		require.Len(t, issue.Labels.Nodes, 1)
+		assert.Equal(
+			t,
+			Label{Name: "bug", Color: "#ff0000", Description: "Bug label"},
+			issue.Labels.Nodes[0],
+		)
+		assert.Equal(t, "group", issue.Repository.Owner.Login)
+		assert.Equal(t, "proj", issue.Repository.Name)
+		assert.Equal(t, "group/proj", issue.Repository.NameWithOwner)
+	})
+
+	t.Run("populates assignees from the response", func(t *testing.T) {
+		defer SetClient(nil)
+
+		responseBody := `{"data":{"project":{"issue":{
+			"iid":"7","title":"Something broken","description":"","state":"opened",
+			"author":{"username":"jdoe"},
+			"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+			"webUrl":"https://gitlab.com/group/proj/-/issues/7",
+			"labels":{"nodes":[]},
+			"assignees":{"nodes":[{"username":"alice"},{"username":"bob"}]}
+		}}}}`
+
+		mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+		SetClient(mockClient)
+
+		issue, err := FetchIssue("https://gitlab.com/group/proj/-/issues/7")
+		require.NoError(t, err)
+
+		require.Len(t, issue.Assignees.Nodes, 2)
+		assert.Equal(t, Assignee{Login: "alice"}, issue.Assignees.Nodes[0])
+		assert.Equal(t, Assignee{Login: "bob"}, issue.Assignees.Nodes[1])
+	})
+
+	t.Run("propagates error when the server responds with http 500", func(t *testing.T) {
+		defer SetClient(nil)
+
+		mockClient := newMockGraphQLClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		SetClient(mockClient)
+
+		_, err := FetchIssue("https://gitlab.com/group/proj/-/issues/7")
+		require.Error(t, err)
+	})
+
+	t.Run("propagates error when the response contains graphql errors", func(t *testing.T) {
+		defer SetClient(nil)
+
+		responseBody := `{"data":null,"errors":[{"message":"boom"}]}`
+		mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+		SetClient(mockClient)
+
+		_, err := FetchIssue("https://gitlab.com/group/proj/-/issues/7")
+		require.Error(t, err)
+	})
+
+	t.Run(
+		"propagates error when the url has no issue segment to parse",
+		func(t *testing.T) {
+			defer SetClient(nil)
+
+			mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, `{}`))
+			SetClient(mockClient)
+
+			_, err := FetchIssue("https://gitlab.com/group/proj")
+			require.Error(t, err)
+		},
+	)
+}
+
+func TestFetchIssue_DeclaresFullPathAsGraphQLID(t *testing.T) {
+	defer SetClient(nil)
+
+	responseBody := `{"data":{"project":{"issue":{
+		"iid":"7","title":"Something broken","description":"","state":"opened",
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/issues/7",
+		"labels":{"nodes":[]}
+	}}}}`
+
+	var capturedBody graphQLRequestBody
+	var mu sync.Mutex
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLRequestBody(t, r)
+		mu.Lock()
+		capturedBody = body
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(responseBody))
+	}
+
+	mockClient := newMockGraphQLClient(t, handler)
+	SetClient(mockClient)
+
+	_, err := FetchIssue("https://gitlab.com/group/proj/-/issues/7")
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, capturedBody.Query)
+	assert.Contains(
+		t,
+		capturedBody.Query,
+		"$fullPath:ID!",
+		"Query.project(fullPath:) requires ID in the real GitLab schema, got query: %s",
+		capturedBody.Query,
+	)
+	assert.NotContains(t, capturedBody.Query, "$fullPath:String!")
+	assert.Contains(
+		t,
+		capturedBody.Query,
+		"$iid:String!",
+		"Project.issue(iid:) requires String in the real GitLab schema, same as Project.mergeRequest(iid:), got query: %s",
+		capturedBody.Query,
+	)
+	assert.Equal(t, "group/proj", capturedBody.Variables["fullPath"])
+	assert.Equal(t, "7", capturedBody.Variables["iid"])
+}

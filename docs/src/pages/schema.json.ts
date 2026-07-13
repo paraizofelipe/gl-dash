@@ -2,9 +2,9 @@ export function GET() {
   return new Response(
     JSON.stringify({
       $schema: "https://json-schema.org/draft/2020-12/schema",
-      $id: "gh-dash.schema.json",
+      $id: "gl-dash.schema.json",
       title: "Dashboard Configuration",
-      description: "Settings for the GitHub Dashboard.",
+      description: "Settings for the GitLab Dashboard.",
       type: "object",
       properties: {
         include: {
@@ -71,7 +71,7 @@ export function GET() {
           examples: [
             {
               "dlvhdr/*": "~/code/repos/*",
-              "dlvhdr/gh-dash": "~/code/gh-dash",
+              "dlvhdr/gl-dash": "~/code/gl-dash",
             },
           ],
           patternProperties: {
@@ -173,13 +173,13 @@ export function GET() {
         smartFilteringAtLaunch: {
           title: "Smart Filtering At Launch",
           description:
-            "Set this to `false` to disable [Smart Filtering](/getting-started/smartfiltering) at `gh-dash` launch.\n",
+            "Set this to `false` to disable [Smart Filtering](/getting-started/smartfiltering) at `gl-dash` launch.\n",
           type: "boolean",
         },
         confirmQuit: {
           title: "Confirm Quit",
           description:
-            "Specifies whether the user needs to confirm when quitting `gh-dash`",
+            "Specifies whether the user needs to confirm when quitting `gl-dash`",
           type: "boolean",
           default: "false",
         },

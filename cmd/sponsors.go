@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
@@ -16,11 +17,18 @@ import (
 // sponsorsCmd represents the sponsors command
 var sponsorsCmd = &cobra.Command{
 	Use:   "sponsors",
-	Short: "Show the list of current sponsors for gh-dash",
-	Long: `Show the list of current sponsors for gh-dash from GitHub Sponsors under https://github.com/sponsors/dlvhdr.
-If you enjoy dash and want to help, consider supporting the project with a donation!`,
+	Short: "Show the list of current sponsors for gl-dash's upstream project (gh-dash)",
+	Long: `gl-dash doesn't have its own sponsorship program yet. This shows the current sponsors
+of the upstream project (gh-dash) from GitHub Sponsors under https://github.com/sponsors/dlvhdr.
+Requires the GITHUB_TOKEN env var to be set, since this queries the GitHub GraphQL API.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		log.SetLevel(log.ErrorLevel)
+		if os.Getenv("GITHUB_TOKEN") == "" {
+			return fmt.Errorf(
+				"gl-dash sponsors requires the GITHUB_TOKEN env var to be set " +
+					"(this command queries the upstream gh-dash project on GitHub, not GitLab)",
+			)
+		}
 		sponsors, err := data.FetchSponsors()
 		if err != nil {
 			return err

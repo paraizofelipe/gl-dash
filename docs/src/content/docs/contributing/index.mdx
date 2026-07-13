@@ -14,13 +14,13 @@ In this guide you will get an overview of the contribution workflow from opening
 
 ## AI Usage
 
-Please see the [AI Usage Policy](https://github.com/dlvhdr/gh-dash/blob/main/AI_POLICY.md). This is very important.
+Please see the [AI Usage Policy](https://gitlab.com/GROUP/gl-dash/-/blob/main/AI_POLICY.md). This is very important.
 
 ## Quick Guide
 
 ### I Have an Idea for a Feature
 
-Like bug reports, first search through both issues and discussions and try to find if your feature has already been requested. Otherwise, open a discussion in the ["Feature Requests, Ideas"](https://github.com/dlvhdr/gh-dash/issues/new?template=feature_request.md) category.
+Like bug reports, first search through existing issues and try to find if your feature has already been requested. Otherwise, [open an issue](https://gitlab.com/GROUP/gl-dash/-/issues/new) describing it.
 
 ### I've Implemented a Feature
 
@@ -30,7 +30,7 @@ Like bug reports, first search through both issues and discussions and try to fi
 
 ### I Have a Question Which Is Neither a Bug Report nor a Feature Request
 
-Open a [Q&A discussion](https://github.com/dlvhdr/gh-dash/discussions/categories/q-a), or join our [Discord Server](https://discord.gg/SXNXp9NctV) and ask away in the #help forum channel.
+Open an [issue](https://gitlab.com/GROUP/gl-dash/-/issues/new), or join our [Discord Server](https://discord.gg/SXNXp9NctV) and ask away in the #help forum channel.
 
 ## Working on the Code
 
@@ -43,7 +43,7 @@ Using Devbox will get your dev environment up and running easily and make sure w
 - Clone this repo
 
 ```sh
-git clone git@github.com:dlvhdr/gh-dash.git && cd gh-dash
+git clone git@gitlab.com:GROUP/gl-dash.git && cd gl-dash
 ```
 
 - Install `devbox`
@@ -84,7 +84,7 @@ To navigate our codebase with confidence, familiarize yourself with:
 #### Code Structure
 
 - `ui/` - this is the code that's responsible for rendering the different parts of the TUI
-- `data/` - the code that fetches data from GitHub's GraphQL API
+- `data/` - the code that fetches data from GitLab's GraphQL/REST APIs
 - `config/` - code to parse the user's `config.yml` file
 - `utils/` - various utilities
 
