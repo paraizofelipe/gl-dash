@@ -269,6 +269,7 @@ func newModelWithCurrentPRNotification(id, url string) Model {
 					},
 					Repository: data.NotificationRepository{
 						FullName: "owner/repo",
+						HtmlUrl:  "https://github.com/owner/repo",
 					},
 				},
 			},

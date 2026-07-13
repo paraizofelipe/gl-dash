@@ -66,7 +66,8 @@ func parseReasonFilters(search string) []string {
 			reason := match[1]
 			// Expand "participating" meta-filter to multiple reasons
 			if reason == "participating" {
-				reasons = append(reasons,
+				reasons = append(
+					reasons,
 					data.ReasonAuthor,
 					data.ReasonComment,
 					data.ReasonMention,
@@ -245,6 +246,8 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 						cmd = m.markAsDone()
 					case "done_all":
 						cmd = m.markAllAsDone()
+					case "read_all":
+						cmd = m.markAllAsRead()
 					}
 				}
 
@@ -268,10 +271,6 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 				cmd = m.markAsRead()
 				m.NextRow()
 			}
-			return m, cmd
-
-		case key.Matches(msg, keys.NotificationKeys.MarkAllAsRead):
-			cmd = m.markAllAsRead()
 			return m, cmd
 
 		case key.Matches(msg, keys.NotificationKeys.Unsubscribe):
@@ -548,6 +547,20 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 	// Check if there's a next page (skip if we already know there isn't)
 	if m.PageInfo != nil && !m.PageInfo.HasNextPage {
 		return nil
+	}
+
+	if !config.IsFeatureEnabled(config.FF_GITLAB_TODOS) {
+		return []tea.Cmd{func() tea.Msg {
+			return constants.TaskFinishedMsg{
+				SectionId:   m.Id,
+				SectionType: m.Type,
+				TaskId:      "gitlab_todos_disabled",
+				Err: fmt.Errorf(
+					"GitLab notifications are disabled (set %s=1 to enable)",
+					config.FF_GITLAB_TODOS,
+				),
+			}
+		}}
 	}
 
 	var cmds []tea.Cmd
@@ -947,7 +960,10 @@ func (m *Model) fetchCommentCountsForNotifications(notifications []notificationr
 		subjectType := notif.GetSubjectType()
 		subjectUrl := notif.GetUrl()
 		lastReadAt := notif.Notification.LastReadAt
-		apiUrl := notif.Notification.Subject.Url
+		// The actor who triggered this todo (GitLab Todo.Author). There is no
+		// per-comment author lookup in the Todos model, unlike the old GitHub
+		// FetchCommentAuthor(latest_comment_url) call this replaces.
+		notifActor := notif.Notification.Actor
 
 		log.Debug(
 			"Processing notification",
@@ -957,17 +973,13 @@ func (m *Model) fetchCommentCountsForNotifications(notifications []notificationr
 			subjectType,
 			"webUrl",
 			subjectUrl,
-			"apiUrl",
-			apiUrl,
 		)
 
-		latestCommentUrl := notif.Notification.Subject.LatestCommentUrl
-
-		// Only fetch for PR and Issue types
+		// Only fetch for PR/MR and Issue types
 		switch subjectType {
-		case "PullRequest":
+		case "PullRequest", "MergeRequest":
 			// Capture variables for closure
-			id, url, readAt, commentUrl := notifId, subjectUrl, lastReadAt, latestCommentUrl
+			id, url, readAt, fallbackActor := notifId, subjectUrl, lastReadAt, notifActor
 			cmds = append(cmds, func() tea.Msg {
 				log.Debug("Fetching PR for comment count", "url", url)
 				pr, err := data.FetchPullRequest(url)
@@ -976,7 +988,7 @@ func (m *Model) fetchCommentCountsForNotifications(notifications []notificationr
 					return nil
 				}
 				count := countNewPRComments(pr, readAt)
-				actor, _ := data.FetchCommentAuthor(commentUrl)
+				actor := fallbackActor
 				if actor == "" {
 					actor = pr.Author.Login
 				}
@@ -1001,7 +1013,7 @@ func (m *Model) fetchCommentCountsForNotifications(notifications []notificationr
 			})
 		case "Issue":
 			// Capture variables for closure
-			id, url, readAt, commentUrl := notifId, subjectUrl, lastReadAt, latestCommentUrl
+			id, url, readAt, fallbackActor := notifId, subjectUrl, lastReadAt, notifActor
 			cmds = append(cmds, func() tea.Msg {
 				log.Debug("Fetching Issue for comment count", "url", url)
 				issue, err := data.FetchIssue(url)
@@ -1010,7 +1022,7 @@ func (m *Model) fetchCommentCountsForNotifications(notifications []notificationr
 					return nil
 				}
 				count := countNewIssueComments(issue, readAt)
-				actor, _ := data.FetchCommentAuthor(commentUrl)
+				actor := fallbackActor
 				if actor == "" {
 					actor = issue.Author.Login
 				}
@@ -1032,28 +1044,35 @@ func (m *Model) fetchCommentCountsForNotifications(notifications []notificationr
 					Actor:            actor,
 				}
 			})
-		case "CheckSuite":
-			// CheckSuite notifications have subject.url=null in GitHub's API.
-			// We fetch recent workflow runs and find the best match by timestamp.
+		}
+
+		// build_failed todos are enriched asynchronously with the target MR's
+		// pipeline status/URL (Phase 2 fetch, reused via FetchPipelineForTodo).
+		// This replaces the old CheckSuite/FetchRecentWorkflowRun path, which
+		// matched workflow runs by timestamp proximity — GitLab's Todo carries
+		// no pipeline reference of its own, so this is keyed off the reason
+		// instead of a (now nonexistent) "CheckSuite" subject type.
+		if notif.GetReason() == data.ReasonBuildFailed {
 			id := notifId
-			repo := notif.Notification.Repository.FullName
-			updatedAt := notif.Notification.UpdatedAt
-			title := notif.Notification.Subject.Title
+			projectPath := notif.Notification.Repository.FullName
+			mrIID := notif.GetNumber()
 			cmds = append(cmds, func() tea.Msg {
-				log.Debug("Fetching workflow run for CheckSuite", "id", id, "repo", repo)
-				url, err := data.FetchRecentWorkflowRun(repo, updatedAt, title)
-				if err != nil {
-					log.Error("Failed to fetch workflow run", "id", id, "err", err)
+				log.Debug(
+					"Fetching pipeline for build_failed todo",
+					"id",
+					id,
+					"project",
+					projectPath,
+				)
+				enrichment, err := data.FetchPipelineForTodo(projectPath, mrIID)
+				if err != nil || enrichment == nil {
+					log.Debug("No pipeline enrichment available", "id", id, "err", err)
 					return nil
 				}
-				if url == "" {
-					log.Debug("No matching workflow run found", "id", id)
-					return nil
-				}
-				log.Debug("Found workflow run URL", "id", id, "url", url)
+				log.Debug("Found pipeline URL", "id", id, "url", enrichment.Url)
 				return UpdateNotificationUrlMsg{
 					Id:          id,
-					ResolvedUrl: url,
+					ResolvedUrl: enrichment.Url,
 				}
 			})
 		}

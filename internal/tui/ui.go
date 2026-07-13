@@ -658,6 +658,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd = m.promptConfirmation(currSection, "done_all")
 				return m, cmd
 
+			// MarkAllAsRead now converges on the same account-wide
+			// MarkAllTodosAsDone server call as MarkAllAsDone (GitLab's Todos
+			// model has no separate "read" state), so it requires the same
+			// confirmation prompt rather than firing immediately.
+			case key.Matches(msg, keys.NotificationKeys.MarkAllAsRead):
+				cmd = m.promptConfirmation(currSection, "read_all")
+				return m, cmd
+
 			case key.Matches(msg, keys.NotificationKeys.Open):
 				cmd = m.updateSection(currSection.GetId(), currSection.GetType(), msg)
 				return m, cmd

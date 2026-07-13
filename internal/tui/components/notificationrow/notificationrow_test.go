@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
 
 func TestGetReasonDescription(t *testing.T) {
@@ -87,6 +89,42 @@ func TestGetReasonDescription(t *testing.T) {
 			reason:      "ci_activity",
 			subjectType: "CheckSuite",
 			expected:    "CI activity",
+		},
+		{
+			name:        "assigned",
+			reason:      "assigned",
+			subjectType: "Issue",
+			expected:    "You were assigned",
+		},
+		{
+			name:        "mentioned",
+			reason:      "mentioned",
+			subjectType: "MergeRequest",
+			expected:    "You were mentioned",
+		},
+		{
+			name:        "build_failed",
+			reason:      "build_failed",
+			subjectType: "MergeRequest",
+			expected:    "Pipeline failed",
+		},
+		{
+			name:        "marked",
+			reason:      "marked",
+			subjectType: "Issue",
+			expected:    "Manually marked as a to-do",
+		},
+		{
+			name:        "approval_required",
+			reason:      "approval_required",
+			subjectType: "MergeRequest",
+			expected:    "Your approval is required",
+		},
+		{
+			name:        "directly_addressed",
+			reason:      "directly_addressed",
+			subjectType: "Issue",
+			expected:    "You were directly addressed",
 		},
 		// unknown/empty
 		{
@@ -376,6 +414,120 @@ func TestActivityDescriptionFallback(t *testing.T) {
 						tt.activityDescription,
 					)
 				}
+			}
+		})
+	}
+}
+
+func newNotificationTestContext() *context.ProgramContext {
+	thm := *theme.DefaultTheme
+	return &context.ProgramContext{
+		Theme:  thm,
+		Styles: context.InitStyles(thm),
+	}
+}
+
+func TestRenderTypeIconForKnownTargetTypes(t *testing.T) {
+	ctx := newNotificationTestContext()
+
+	newNotification := func(subjectType string) *Notification {
+		return &Notification{
+			Ctx: ctx,
+			Data: &Data{
+				SubjectState: StateOpen,
+				IsDraft:      false,
+				Notification: data.NotificationData{
+					Subject: data.NotificationSubject{Type: subjectType},
+				},
+			},
+		}
+	}
+
+	mergeRequestRendered := newNotification("MergeRequest").renderType()
+	pullRequestRendered := newNotification("PullRequest").renderType()
+	unknownRendered := newNotification("SomeUnknownGitLabType").renderType()
+
+	if mergeRequestRendered != pullRequestRendered {
+		t.Errorf(
+			"renderType() for MergeRequest = %q, want same rendering as PullRequest %q",
+			mergeRequestRendered, pullRequestRendered,
+		)
+	}
+	if mergeRequestRendered == unknownRendered {
+		t.Errorf(
+			"renderType() for MergeRequest = %q, should not match the generic default rendering %q",
+			mergeRequestRendered, unknownRendered,
+		)
+	}
+}
+
+func TestRenderTypeAndReasonDescriptionNoPanicOnUnknownValues(t *testing.T) {
+	ctx := newNotificationTestContext()
+
+	unknownSubjectTypeCases := []struct {
+		name        string
+		subjectType string
+	}{
+		{name: "unknown GitLab target type", subjectType: "AlertManagement::Alert"},
+		{name: "unknown short value", subjectType: "unmergeable"},
+		{name: "empty subject type", subjectType: ""},
+	}
+
+	for _, tt := range unknownSubjectTypeCases {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("renderType() panicked for subject type %q: %v", tt.subjectType, r)
+				}
+			}()
+			n := &Notification{
+				Ctx: ctx,
+				Data: &Data{
+					Notification: data.NotificationData{
+						Subject: data.NotificationSubject{Type: tt.subjectType},
+					},
+				},
+			}
+			result := n.renderType()
+			if result == "" {
+				t.Errorf(
+					"renderType() for unknown subject type %q returned empty string, want a rendered default icon",
+					tt.subjectType,
+				)
+			}
+		})
+	}
+
+	unknownReasonCases := []struct {
+		name   string
+		reason string
+	}{
+		{name: "unknown GitLab reason", reason: "unmergeable"},
+		{name: "unknown namespaced value", reason: "AlertManagement::Alert"},
+		{name: "empty reason", reason: ""},
+	}
+
+	for _, tt := range unknownReasonCases {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("getReasonDescription() panicked for reason %q: %v", tt.reason, r)
+				}
+			}()
+			n := &Notification{
+				Data: &Data{
+					Notification: data.NotificationData{
+						Reason: tt.reason,
+					},
+				},
+			}
+			result := n.getReasonDescription()
+			if result != "" {
+				t.Errorf(
+					"getReasonDescription() for unknown reason %q = %q, want empty fallback",
+					tt.reason,
+					result,
+				)
 			}
 		})
 	}

@@ -65,9 +65,13 @@ func (m *Model) markAsDone() tea.Cmd {
 	})
 }
 
-// markAllAsDone marks all currently visible notifications in this section as done.
-// "All" refers to the notifications currently loaded in m.Notifications, not all
-// notifications on GitHub.
+// markAllAsDone marks ALL pending GitLab todos for the current account as
+// done via a single batched call (data.MarkAllNotificationsRead, which calls
+// Todos.MarkAllTodosAsDone) — not just the notifications currently loaded in
+// m.Notifications. This is a deliberate behavior change from the previous
+// GitHub-backed implementation, which only affected the visible notifications
+// one at a time; GitLab's Todos API has no scoped "mark these N as done"
+// batch endpoint, only a global one.
 func (m *Model) markAllAsDone() tea.Cmd {
 	if len(m.Notifications) == 0 {
 		return nil
@@ -76,9 +80,12 @@ func (m *Model) markAllAsDone() tea.Cmd {
 	count := len(m.Notifications)
 	taskId := "notification_done_all"
 	task := context.Task{
-		Id:           taskId,
-		StartText:    fmt.Sprintf("Marking %d notifications as done", count),
-		FinishedText: fmt.Sprintf("%d notifications marked as done", count),
+		Id: taskId,
+		StartText: fmt.Sprintf(
+			"Marking all pending GitLab todos as done (not just the %d shown here)",
+			count,
+		),
+		FinishedText: "All pending GitLab todos marked as done",
 		State:        context.TaskStart,
 		Error:        nil,
 	}
@@ -94,25 +101,21 @@ func (m *Model) markAllAsDone() tea.Cmd {
 
 	startCmd := m.Ctx.StartTask(task)
 	return tea.Batch(startCmd, func() tea.Msg {
-		// Mark each notification as done (delete it)
-		doneStore := data.GetDoneStore()
-		var lastErr error
-		for _, e := range entries {
-			if err := data.MarkNotificationDone(e.id); err != nil {
-				lastErr = err
-			} else {
-				// Persist to done store so it stays hidden across sessions
-				doneStore.MarkDone(e.id, e.updatedAt)
-			}
-		}
-
-		if lastErr != nil {
+		if err := data.MarkAllNotificationsRead(); err != nil {
 			return constants.TaskFinishedMsg{
 				SectionId:   m.Id,
 				SectionType: SectionType,
 				TaskId:      taskId,
-				Err:         lastErr,
+				Err:         err,
 			}
+		}
+
+		// Persist the currently visible notifications to the done store so
+		// they stay hidden across sessions even though the server-side call
+		// above affected the whole account, not just these.
+		doneStore := data.GetDoneStore()
+		for _, e := range entries {
+			doneStore.MarkDone(e.id, e.updatedAt)
 		}
 
 		// Clear all notifications after marking as done

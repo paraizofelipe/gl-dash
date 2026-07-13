@@ -46,8 +46,9 @@ func (n *Notification) renderType() string {
 	// Icons are always colored - only the blue dot indicates unread status
 	var icon string
 	switch n.Data.GetSubjectType() {
-	case "PullRequest":
-		// Use state-based icons/colors matching prrow.go
+	case "PullRequest", "MergeRequest":
+		// Use state-based icons/colors matching prrow.go. GitLab merge
+		// requests share the exact same treatment as GitHub pull requests.
 		switch n.Data.SubjectState {
 		case "MERGED":
 			style = style.Foreground(n.Ctx.Styles.Colors.MergedPR)
@@ -216,6 +217,18 @@ func (n *Notification) getReasonDescription() string {
 		return "State changed"
 	case "ci_activity":
 		return "CI activity"
+	case "assigned":
+		return "You were assigned"
+	case "mentioned":
+		return "You were mentioned"
+	case "build_failed":
+		return "Pipeline failed"
+	case "marked":
+		return "Manually marked as a to-do"
+	case "approval_required":
+		return "Your approval is required"
+	case "directly_addressed":
+		return "You were directly addressed"
 	default:
 		return ""
 	}

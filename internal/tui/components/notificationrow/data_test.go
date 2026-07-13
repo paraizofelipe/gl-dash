@@ -1,6 +1,7 @@
 package notificationrow
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
@@ -93,6 +94,30 @@ func TestGetNumber(t *testing.T) {
 				},
 			},
 			expected: 456,
+		},
+		{
+			name: "MergeRequest returns extracted number",
+			data: Data{
+				Notification: data.NotificationData{
+					Subject: data.NotificationSubject{
+						Type: "MergeRequest",
+						Url:  "https://gitlab.com/group/proj/-/merge_requests/42",
+					},
+				},
+			},
+			expected: 42,
+		},
+		{
+			name: "MergeRequest with non-numeric URL returns 0",
+			data: Data{
+				Notification: data.NotificationData{
+					Subject: data.NotificationSubject{
+						Type: "MergeRequest",
+						Url:  "https://gitlab.com/group/proj/-/merge_requests/abc",
+					},
+				},
+			},
+			expected: 0,
 		},
 		{
 			name: "Discussion returns 0",
@@ -321,6 +346,54 @@ func TestGetUrl(t *testing.T) {
 			},
 			expected: "https://github.com/my-org/my-repo/pull/1",
 		},
+		{
+			name: "MergeRequest with GitLab web URL returns URL as-is",
+			data: Data{
+				Notification: data.NotificationData{
+					Subject: data.NotificationSubject{
+						Type: "MergeRequest",
+						Url:  "https://gitlab.com/group/proj/-/merge_requests/42",
+					},
+					Repository: data.NotificationRepository{
+						FullName: "group/proj",
+						HtmlUrl:  "https://gitlab.com/group/proj",
+					},
+				},
+			},
+			expected: "https://gitlab.com/group/proj/-/merge_requests/42",
+		},
+		{
+			name: "Issue with GitLab web URL returns URL as-is instead of reconstructing",
+			data: Data{
+				Notification: data.NotificationData{
+					Subject: data.NotificationSubject{
+						Type: "Issue",
+						Url:  "https://gitlab.com/group/proj/-/issues/7",
+					},
+					Repository: data.NotificationRepository{
+						FullName: "group/proj",
+						HtmlUrl:  "https://gitlab.com/group/proj",
+					},
+				},
+			},
+			expected: "https://gitlab.com/group/proj/-/issues/7",
+		},
+		{
+			name: "MergeRequest with empty URL falls back to base repo URL",
+			data: Data{
+				Notification: data.NotificationData{
+					Subject: data.NotificationSubject{
+						Type: "MergeRequest",
+						Url:  "",
+					},
+					Repository: data.NotificationRepository{
+						FullName: "group/proj",
+						HtmlUrl:  "https://gitlab.com/group/proj",
+					},
+				},
+			},
+			expected: "https://gitlab.com/group/proj",
+		},
 		// GitHub Enterprise tests
 		{
 			name: "GHE: PullRequest uses enterprise host",
@@ -404,7 +477,7 @@ func TestGetUrl(t *testing.T) {
 		},
 		// Fallback when HtmlUrl is empty
 		{
-			name: "empty HtmlUrl falls back to github.com",
+			name: "empty HtmlUrl produces a path without host",
 			data: Data{
 				Notification: data.NotificationData{
 					Subject: data.NotificationSubject{
@@ -417,7 +490,7 @@ func TestGetUrl(t *testing.T) {
 					},
 				},
 			},
-			expected: "https://github.com/owner/repo/pull/7",
+			expected: "/pull/7",
 		},
 	}
 
@@ -969,6 +1042,223 @@ func TestGenerateActivityDescription(t *testing.T) {
 				t.Errorf("GenerateActivityDescription(%q, %q, %q) = %q, want %q",
 					tt.reason, tt.subjectType, tt.actor, result, tt.expected)
 			}
+		})
+	}
+}
+
+func TestGenerateActivityDescriptionKnownActions(t *testing.T) {
+	tests := []struct {
+		name        string
+		reason      string
+		subjectType string
+		actor       string
+		expected    string
+	}{
+		{
+			name:        "assigned with actor",
+			reason:      "assigned",
+			subjectType: "Issue",
+			actor:       "gitlabuser",
+			expected:    "You were assigned",
+		},
+		{
+			name:        "assigned without actor",
+			reason:      "assigned",
+			subjectType: "Issue",
+			actor:       "",
+			expected:    "You were assigned",
+		},
+		{
+			name:        "mentioned with actor",
+			reason:      "mentioned",
+			subjectType: "MergeRequest",
+			actor:       "gitlabuser",
+			expected:    "@gitlabuser mentioned you",
+		},
+		{
+			name:        "mentioned without actor",
+			reason:      "mentioned",
+			subjectType: "MergeRequest",
+			actor:       "",
+			expected:    "You were mentioned",
+		},
+		{
+			name:        "build_failed with actor",
+			reason:      "build_failed",
+			subjectType: "MergeRequest",
+			actor:       "gitlabuser",
+			expected:    "Pipeline failed",
+		},
+		{
+			name:        "build_failed without actor",
+			reason:      "build_failed",
+			subjectType: "MergeRequest",
+			actor:       "",
+			expected:    "Pipeline failed",
+		},
+		{
+			name:        "marked with actor",
+			reason:      "marked",
+			subjectType: "Issue",
+			actor:       "gitlabuser",
+			expected:    "Manually marked as a to-do",
+		},
+		{
+			name:        "marked without actor",
+			reason:      "marked",
+			subjectType: "Issue",
+			actor:       "",
+			expected:    "Manually marked as a to-do",
+		},
+		{
+			name:        "approval_required with actor",
+			reason:      "approval_required",
+			subjectType: "MergeRequest",
+			actor:       "gitlabuser",
+			expected:    "Your approval is required",
+		},
+		{
+			name:        "approval_required without actor",
+			reason:      "approval_required",
+			subjectType: "MergeRequest",
+			actor:       "",
+			expected:    "Your approval is required",
+		},
+		{
+			name:        "directly_addressed with actor",
+			reason:      "directly_addressed",
+			subjectType: "Issue",
+			actor:       "gitlabuser",
+			expected:    "@gitlabuser addressed you directly",
+		},
+		{
+			name:        "directly_addressed without actor",
+			reason:      "directly_addressed",
+			subjectType: "Issue",
+			actor:       "",
+			expected:    "You were directly addressed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GenerateActivityDescription(tt.reason, tt.subjectType, tt.actor)
+			if result != tt.expected {
+				t.Errorf("GenerateActivityDescription(%q, %q, %q) = %q, want %q",
+					tt.reason, tt.subjectType, tt.actor, result, tt.expected)
+			}
+			genericFallbackWithActor := tt.actor != "" &&
+				result == "@"+tt.actor+" triggered this notification"
+			genericFallbackWithoutActor := tt.actor == "" && result == ""
+			if genericFallbackWithActor || genericFallbackWithoutActor {
+				t.Errorf(
+					"GenerateActivityDescription(%q, %q, %q) = %q, fell back to the generic default instead of a known GitLab reason text",
+					tt.reason,
+					tt.subjectType,
+					tt.actor,
+					result,
+				)
+			}
+		})
+	}
+}
+
+func TestDataMethodsNoPanicOnUnknownGitLabValues(t *testing.T) {
+	unknownSubjectTypeCases := []struct {
+		name        string
+		subjectType string
+		url         string
+	}{
+		{
+			name:        "unknown GitLab target type with repos-style URL",
+			subjectType: "AlertManagement::Alert",
+			url:         "https://api.github.com/repos/owner/repo/something/9",
+		},
+		{
+			name:        "unknown GitLab target type with raw web URL",
+			subjectType: "AlertManagement::Alert",
+			url:         "https://gitlab.com/group/proj/-/unknown/9",
+		},
+		{
+			name:        "unknown short value with empty URL",
+			subjectType: "unmergeable",
+			url:         "",
+		},
+	}
+
+	for _, tt := range unknownSubjectTypeCases {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf(
+						"GetUrl()/GetNumber() panicked for subject type %q: %v",
+						tt.subjectType,
+						r,
+					)
+				}
+			}()
+			d := Data{
+				Notification: data.NotificationData{
+					Subject: data.NotificationSubject{
+						Type: tt.subjectType,
+						Url:  tt.url,
+					},
+					Repository: data.NotificationRepository{
+						FullName: "group/proj",
+						HtmlUrl:  "https://gitlab.com/group/proj",
+					},
+				},
+			}
+
+			url := d.GetUrl()
+			if url == "" {
+				t.Errorf(
+					"GetUrl() for unknown subject type %q returned empty string",
+					tt.subjectType,
+				)
+			}
+			isRawWebUrl := tt.url != "" && !strings.Contains(tt.url, "/repos/")
+			if isRawWebUrl && url != tt.url {
+				t.Errorf(
+					"GetUrl() for unknown subject type %q with raw web URL = %q, want the URL untouched %q",
+					tt.subjectType,
+					url,
+					tt.url,
+				)
+			}
+
+			if number := d.GetNumber(); number != 0 {
+				t.Errorf(
+					"GetNumber() for unknown subject type %q = %d, want 0",
+					tt.subjectType,
+					number,
+				)
+			}
+		})
+	}
+
+	unknownReasonCases := []struct {
+		name        string
+		reason      string
+		subjectType string
+	}{
+		{name: "unknown GitLab reason", reason: "unmergeable", subjectType: "MergeRequest"},
+		{name: "unknown namespaced value", reason: "AlertManagement::Alert", subjectType: "Issue"},
+		{name: "empty reason", reason: "", subjectType: "Issue"},
+	}
+
+	for _, tt := range unknownReasonCases {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf(
+						"GenerateActivityDescription() panicked for reason %q: %v",
+						tt.reason,
+						r,
+					)
+				}
+			}()
+			_ = GenerateActivityDescription(tt.reason, tt.subjectType, "someone")
 		})
 	}
 }

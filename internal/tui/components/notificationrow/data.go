@@ -42,7 +42,7 @@ func (d Data) GetRepoNameWithOwner() string {
 
 func (d Data) GetNumber() int {
 	subject := d.Notification.Subject
-	if subject.Type == "PullRequest" || subject.Type == "Issue" {
+	if subject.Type == "PullRequest" || subject.Type == "Issue" || subject.Type == "MergeRequest" {
 		numStr := extractNumberFromUrl(subject.Url)
 		if num, err := strconv.Atoi(numStr); err == nil {
 			return num
@@ -51,9 +51,23 @@ func (d Data) GetNumber() int {
 	return 0
 }
 
+// isApiFollowUpUrl reports whether rawUrl looks like a GitHub REST API URL
+// (e.g. https://api.github.com/repos/owner/repo/pulls/123 or the GHE
+// equivalent under /api/v3/repos/...) rather than a ready-to-use web URL.
+// GitLab's Todo.Target.WebURL is always a web URL and never contains
+// "/repos/", so this is a reliable discriminator between the two shapes
+// that both flow through the same NotificationSubject.Url field.
+func isApiFollowUpUrl(rawUrl string) bool {
+	return strings.Contains(rawUrl, "/repos/")
+}
+
 func (d Data) GetUrl() string {
 	subject := d.Notification.Subject
 	baseUrl := repoBaseUrl(d.Notification.Repository)
+
+	if subject.Url != "" && !isApiFollowUpUrl(subject.Url) {
+		return subject.Url
+	}
 
 	switch subject.Type {
 	case "PullRequest":
@@ -75,19 +89,19 @@ func (d Data) GetUrl() string {
 			return d.ResolvedUrl
 		}
 		return fmt.Sprintf("%s/actions", baseUrl)
+	case "MergeRequest":
+		return baseUrl
 	default:
 		return baseUrl
 	}
 }
 
-// repoBaseUrl returns the base HTML URL for a repository.
-// It prefers Repository.HtmlUrl (which includes the correct host for GitHub Enterprise),
-// falling back to https://github.com/<FullName> if HtmlUrl is empty.
+// repoBaseUrl returns the base web URL for a repository/project, taken
+// directly from Repository.HtmlUrl (populated from the GitLab project's
+// namespace path, or a GitHub Enterprise host for legacy data). Returns ""
+// when HtmlUrl is empty rather than guessing a host.
 func repoBaseUrl(repo data.NotificationRepository) string {
-	if repo.HtmlUrl != "" {
-		return strings.TrimRight(repo.HtmlUrl, "/")
-	}
-	return fmt.Sprintf("https://github.com/%s", repo.FullName)
+	return strings.TrimRight(repo.HtmlUrl, "/")
 }
 
 func (d Data) GetUpdatedAt() time.Time {
@@ -187,6 +201,24 @@ func GenerateActivityDescription(reason, subjectType, actor string) string {
 		return "Your team was mentioned"
 	case "security_alert":
 		return "Security vulnerability detected"
+	case "assigned":
+		return "You were assigned"
+	case "mentioned":
+		if actor != "" {
+			return fmt.Sprintf("@%s mentioned you", actor)
+		}
+		return "You were mentioned"
+	case "build_failed":
+		return "Pipeline failed"
+	case "marked":
+		return "Manually marked as a to-do"
+	case "approval_required":
+		return "Your approval is required"
+	case "directly_addressed":
+		if actor != "" {
+			return fmt.Sprintf("@%s addressed you directly", actor)
+		}
+		return "You were directly addressed"
 	default:
 		if actor != "" {
 			return fmt.Sprintf("@%s triggered this notification", actor)

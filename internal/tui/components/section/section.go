@@ -505,7 +505,10 @@ func (m *BaseModel) GetPromptConfirmation() string {
 		case m.PromptConfirmationAction == "create_pr" && m.Ctx.View == config.RepoView:
 			prompt = "Enter PR title: "
 		case m.PromptConfirmationAction == "done_all" && m.Ctx.View == config.NotificationsView:
-			prompt = "Are you sure you want to mark all as done? (y/N) "
+			prompt = "Mark ALL pending GitLab todos as done? This affects your whole account, not just what's shown here. (y/N) "
+
+		case m.PromptConfirmationAction == "read_all" && m.Ctx.View == config.NotificationsView:
+			prompt = "Mark ALL pending GitLab todos as done? This affects your whole account, not just what's shown here. (y/N) "
 		}
 
 		m.PromptConfirmationBox.SetPrompt(prompt)

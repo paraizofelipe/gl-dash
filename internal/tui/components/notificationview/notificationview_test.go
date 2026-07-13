@@ -352,3 +352,116 @@ func TestUpdate_ReturnsActionOnConfirm(t *testing.T) {
 
 	require.Equal(t, "pr_close", action, "should return the action on confirm")
 }
+
+func TestGetTypeIconMergeRequestMatchesPullRequest(t *testing.T) {
+	pullRequestIcon := getTypeIcon("PullRequest")
+	mergeRequestIcon := getTypeIcon("MergeRequest")
+
+	require.Equal(
+		t,
+		pullRequestIcon,
+		mergeRequestIcon,
+		"getTypeIcon(\"MergeRequest\") should render the same icon as getTypeIcon(\"PullRequest\")",
+	)
+}
+
+func TestFormatReason(t *testing.T) {
+	tests := []struct {
+		name     string
+		reason   string
+		expected string
+	}{
+		{name: "subscribed", reason: "subscribed", expected: "Subscribed"},
+		{name: "review_requested", reason: "review_requested", expected: "Review requested"},
+		{name: "author", reason: "author", expected: "Author"},
+		{name: "comment", reason: "comment", expected: "Comment"},
+		{name: "mention", reason: "mention", expected: "Mentioned"},
+		{name: "team_mention", reason: "team_mention", expected: "Team mentioned"},
+		{name: "state_change", reason: "state_change", expected: "State changed"},
+		{name: "assign", reason: "assign", expected: "Assigned"},
+		{name: "ci_activity", reason: "ci_activity", expected: "CI activity"},
+		{
+			name:     "approval_requested legacy spelling stays intact",
+			reason:   "approval_requested",
+			expected: "Approval requested",
+		},
+		{name: "assigned", reason: "assigned", expected: "Assigned"},
+		{name: "mentioned", reason: "mentioned", expected: "Mentioned"},
+		{name: "build_failed", reason: "build_failed", expected: "Build failed"},
+		{name: "marked", reason: "marked", expected: "Marked"},
+		{
+			name:     "approval_required distinct from approval_requested",
+			reason:   "approval_required",
+			expected: "Approval required",
+		},
+		{name: "directly_addressed", reason: "directly_addressed", expected: "Directly addressed"},
+		{
+			name:     "unknown reason echoes the raw value",
+			reason:   "some_unknown_reason",
+			expected: "some_unknown_reason",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatReason(tt.reason)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+
+	require.NotEqual(
+		t,
+		formatReason("approval_requested"),
+		formatReason("approval_required"),
+		"approval_requested and approval_required are distinct GitHub/GitLab reasons and must format differently",
+	)
+}
+
+func TestNoPanicOnUnknownGitLabValues(t *testing.T) {
+	unknownSubjectTypeCases := []struct {
+		name        string
+		subjectType string
+	}{
+		{name: "unknown GitLab target type", subjectType: "AlertManagement::Alert"},
+		{name: "unknown short value", subjectType: "unmergeable"},
+		{name: "empty subject type", subjectType: ""},
+	}
+
+	for _, tt := range unknownSubjectTypeCases {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("getTypeIcon() panicked for subject type %q: %v", tt.subjectType, r)
+				}
+			}()
+			_ = getTypeIcon(tt.subjectType)
+		})
+	}
+
+	unknownReasonCases := []struct {
+		name   string
+		reason string
+	}{
+		{name: "unknown GitLab reason", reason: "unmergeable"},
+		{name: "unknown namespaced value", reason: "AlertManagement::Alert"},
+		{name: "empty reason", reason: ""},
+	}
+
+	for _, tt := range unknownReasonCases {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("formatReason() panicked for reason %q: %v", tt.reason, r)
+				}
+			}()
+			result := formatReason(tt.reason)
+			require.Equal(
+				t,
+				tt.reason,
+				result,
+				"formatReason(%q) should echo the raw reason back",
+				tt.reason,
+			)
+		})
+	}
+}

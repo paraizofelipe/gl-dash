@@ -1,26 +1,31 @@
 package data
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"charm.land/log/v2"
-	gh "github.com/cli/go-gh/v2/pkg/api"
+	gitlabapi "gitlab.com/gitlab-org/api/client-go"
 )
 
-// Notification subject types from GitHub API
+// Notification subject types. PullRequest/Issue/Discussion/Release/Commit/CheckSuite
+// come from the GitHub notifications API; MergeRequest/Issue come from GitLab's
+// Todo.TargetType. Issue is shared by both vocabularies.
 const (
-	SubjectTypePullRequest = "PullRequest"
-	SubjectTypeIssue       = "Issue"
-	SubjectTypeDiscussion  = "Discussion"
-	SubjectTypeRelease     = "Release"
-	SubjectTypeCommit      = "Commit"
-	SubjectTypeCheckSuite  = "CheckSuite"
+	SubjectTypePullRequest  = "PullRequest"
+	SubjectTypeIssue        = "Issue"
+	SubjectTypeDiscussion   = "Discussion"
+	SubjectTypeRelease      = "Release"
+	SubjectTypeCommit       = "Commit"
+	SubjectTypeCheckSuite   = "CheckSuite"
+	SubjectTypeMergeRequest = "MergeRequest"
 )
 
-// Notification reasons from GitHub API
+// Notification reasons. The first block comes from the GitHub notifications
+// API; the second block comes from GitLab's Todo.ActionName (gitlab.TodoAction).
 const (
 	ReasonSubscribed      = "subscribed"
 	ReasonReviewRequested = "review_requested"
@@ -32,18 +37,20 @@ const (
 	ReasonCIActivity      = "ci_activity"
 	ReasonTeamMention     = "team_mention"
 	ReasonSecurityAlert   = "security_alert"
-)
 
-var (
-	restClient   *gh.RESTClient
-	restClientMu sync.Mutex
+	ReasonAssigned          = "assigned"
+	ReasonMentioned         = "mentioned"
+	ReasonBuildFailed       = "build_failed"
+	ReasonMarked            = "marked"
+	ReasonApprovalRequired  = "approval_required"
+	ReasonDirectlyAddressed = "directly_addressed"
 )
 
 type NotificationSubject struct {
 	Title            string `json:"title"`
 	Url              string `json:"url"`
 	LatestCommentUrl string `json:"latest_comment_url"`
-	Type             string `json:"type"` // PullRequest, Issue, Discussion, Release, etc.
+	Type             string `json:"type"`
 }
 
 type NotificationRepository struct {
@@ -60,13 +67,16 @@ type NotificationRepository struct {
 type NotificationData struct {
 	Id           string                 `json:"id"`
 	Unread       bool                   `json:"unread"`
-	Reason       string                 `json:"reason"` // subscribed, review_requested, mention, etc.
+	Reason       string                 `json:"reason"`
 	UpdatedAt    time.Time              `json:"updated_at"`
 	LastReadAt   *time.Time             `json:"last_read_at"`
 	Subject      NotificationSubject    `json:"subject"`
 	Repository   NotificationRepository `json:"repository"`
 	Url          string                 `json:"url"`
 	Subscription string                 `json:"subscription_url"`
+	// Actor is the username of the user who triggered this todo
+	// (Todo.Author.Username on GitLab). Empty for data not sourced from a Todo.
+	Actor string `json:"-"`
 }
 
 func (n NotificationData) GetTitle() string {
@@ -83,10 +93,7 @@ func (n NotificationData) GetNumber() int {
 }
 
 func (n NotificationData) GetUrl() string {
-	if n.Repository.HtmlUrl != "" {
-		return strings.TrimRight(n.Repository.HtmlUrl, "/")
-	}
-	return fmt.Sprintf("https://github.com/%s", n.Repository.FullName)
+	return strings.TrimRight(n.Repository.HtmlUrl, "/")
 }
 
 func (n NotificationData) GetUpdatedAt() time.Time {
@@ -104,18 +111,15 @@ type NotificationsResponse struct {
 	PageInfo      PageInfo
 }
 
-func getRESTClient() (*gh.RESTClient, error) {
-	restClientMu.Lock()
-	defer restClientMu.Unlock()
-	if restClient != nil {
-		return restClient, nil
-	}
-	c, err := gh.DefaultRESTClient()
+// getTodosService returns the GitLab Todos REST service, reusing the cached
+// REST client already maintained by resolveRESTClient (internal/data/prapi.go,
+// same package) instead of keeping a second, redundant client cache.
+func getTodosService() (gitlabapi.TodosServiceInterface, error) {
+	c, err := resolveRESTClient()
 	if err != nil {
 		return nil, err
 	}
-	restClient = c
-	return restClient, nil
+	return c.Todos, nil
 }
 
 // NotificationReadState represents the read state filter for notifications
@@ -127,25 +131,20 @@ const (
 	NotificationStateAll    NotificationReadState = "all"    // Both read and unread
 )
 
+// notificationThreadScanMaxPages bounds the best-effort scan performed by
+// FetchNotificationByThreadId. Not a contractual limit, just a sane cap on
+// how many pages (of 100) we're willing to walk per state.
+const notificationThreadScanMaxPages = 10
+
 func FetchNotifications(
 	limit int,
 	repoFilters []string,
 	readState NotificationReadState,
 	pageInfo *PageInfo,
 ) (NotificationsResponse, error) {
-	client, err := getRESTClient()
+	todos, err := getTodosService()
 	if err != nil {
 		return NotificationsResponse{}, err
-	}
-
-	var allNotifications []NotificationData
-
-	// Build query params
-	// all=true returns both read and unread notifications
-	includeAll := readState == NotificationStateRead || readState == NotificationStateAll
-	allParam := ""
-	if includeAll {
-		allParam = "&all=true"
 	}
 
 	// Determine page number from PageInfo (EndCursor stores the current page as string)
@@ -154,94 +153,62 @@ func FetchNotifications(
 		fmt.Sscanf(pageInfo.EndCursor, "%d", &page)
 	}
 
-	if len(repoFilters) == 0 {
-		// No repo filter, fetch all notifications
-		path := fmt.Sprintf("notifications?per_page=%d&page=%d%s", limit, page, allParam)
-		log.Debug("Fetching notifications", "limit", limit, "page", page, "readState", readState)
-		err = client.Get(path, &allNotifications)
-		if err != nil {
-			return NotificationsResponse{}, err
-		}
-	} else {
-		// Fetch notifications for each repo and combine
-		for _, repo := range repoFilters {
-			var repoNotifications []NotificationData
-			path := fmt.Sprintf(
-				"repos/%s/notifications?per_page=%d&page=%d%s",
-				repo,
-				limit,
-				page,
-				allParam,
-			)
-			log.Debug(
-				"Fetching notifications for repo",
-				"repo",
-				repo,
-				"limit",
-				limit,
-				"page",
-				page,
-				"readState",
-				readState,
-			)
-			err = client.Get(path, &repoNotifications)
-			if err != nil {
-				log.Warn("Failed to fetch notifications for repo", "repo", repo, "err", err)
-				continue
-			}
-			allNotifications = append(allNotifications, repoNotifications...)
-		}
+	opt := &gitlabapi.ListTodosOptions{
+		ListOptions: gitlabapi.ListOptions{
+			PerPage: int64(limit),
+			Page:    int64(page),
+		},
+	}
+	switch readState {
+	case NotificationStateUnread:
+		opt.State = gitlabapi.Ptr("pending")
+	case NotificationStateRead:
+		opt.State = gitlabapi.Ptr("done")
+	case NotificationStateAll:
+		// No state filter. Note: GitLab's GET /todos returns only pending
+		// todos when no state filter is applied (not both), a real
+		// asymmetry versus the old GitHub all=true behavior.
 	}
 
-	// Determine if there's a next page BEFORE filtering (based on raw API response count).
-	// If the API returned a full page, there are likely more notifications on the server.
-	// We must check this before filtering because the caller needs accurate pagination info
-	// to fetch additional pages when many notifications are filtered out locally.
-	rawCount := len(allNotifications)
-	hasNextPage := rawCount >= limit
-	nextPage := fmt.Sprintf("%d", page+1)
+	log.Debug("Fetching notifications", "limit", limit, "page", page, "readState", readState)
+	items, resp, err := todos.ListTodos(opt)
+	if err != nil {
+		return NotificationsResponse{}, err
+	}
 
-	// Filter by read state if needed
-	switch readState {
-	case NotificationStateRead:
-		// Keep only read notifications
-		filtered := make([]NotificationData, 0)
-		for _, n := range allNotifications {
-			if !n.Unread {
-				filtered = append(filtered, n)
-			}
+	// ListTodosOptions.ProjectID filters by numeric project ID, not by
+	// "group/project" path, so repo filtering happens client-side here.
+	repoFilterSet := make(map[string]bool, len(repoFilters))
+	for _, r := range repoFilters {
+		repoFilterSet[r] = true
+	}
+
+	notifications := make([]NotificationData, 0, len(items))
+	for _, item := range items {
+		n := notificationFromTodo(item)
+		if len(repoFilterSet) > 0 && !repoFilterSet[n.Repository.FullName] {
+			continue
 		}
-		allNotifications = filtered
-	case NotificationStateUnread:
-		// Keep only unread notifications (API default, but filter just in case)
-		filtered := make([]NotificationData, 0)
-		for _, n := range allNotifications {
-			if n.Unread {
-				filtered = append(filtered, n)
-			}
-		}
-		allNotifications = filtered
-	case NotificationStateAll:
-		// Keep all, no filtering needed
+		notifications = append(notifications, n)
+	}
+
+	hasNextPage := resp != nil && resp.NextPage != 0
+	nextPage := ""
+	if hasNextPage {
+		nextPage = fmt.Sprintf("%d", resp.NextPage)
 	}
 
 	log.Info(
 		"Successfully fetched notifications",
-		"rawCount",
-		rawCount,
-		"filteredCount",
-		len(allNotifications),
-		"page",
-		page,
-		"hasNextPage",
-		hasNextPage,
-		"readState",
-		readState,
+		"count", len(notifications),
+		"page", page,
+		"hasNextPage", hasNextPage,
+		"readState", readState,
 	)
 
 	return NotificationsResponse{
-		Notifications: allNotifications,
-		TotalCount:    len(allNotifications),
+		Notifications: notifications,
+		TotalCount:    len(notifications),
 		PageInfo: PageInfo{
 			HasNextPage: hasNextPage,
 			EndCursor:   nextPage,
@@ -249,228 +216,182 @@ func FetchNotifications(
 	}, nil
 }
 
-// FetchNotificationByThreadId fetches a single notification by its thread ID.
-// This is useful for fetching bookmarked or session-marked-read notifications
-// that may not appear in the regular notifications list.
+// FetchNotificationByThreadId scans pending and done todos looking for a
+// matching ID. This is useful for refreshing bookmarked or session-marked
+// notifications that may not appear in the regular notifications list.
+//
+// The GitLab Todos API has no GET /todos/:id endpoint (confirmed against
+// gitlab.com/gitlab-org/api/client-go's TodosServiceInterface, which only
+// exposes ListTodos/MarkTodoAsDone/MarkAllTodosAsDone) — this is therefore a
+// bounded, best-effort client-side scan rather than a direct lookup. Returns
+// (nil, nil), not an error, when the todo isn't found within the scan limit.
 func FetchNotificationByThreadId(threadId string) (*NotificationData, error) {
-	client, err := getRESTClient()
+	id, err := strconv.ParseInt(threadId, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid todo id %q: %w", threadId, err)
+	}
+
+	todos, err := getTodosService()
 	if err != nil {
 		return nil, err
 	}
 
-	path := fmt.Sprintf("notifications/threads/%s", threadId)
-	log.Debug("Fetching notification by thread ID", "threadId", threadId)
+	log.Debug("Scanning todos for thread ID", "threadId", threadId)
 
-	var notification NotificationData
-	err = client.Get(path, &notification)
-	if err != nil {
-		return nil, err
+	for _, state := range []string{"pending", "done"} {
+		for page := int64(1); page <= notificationThreadScanMaxPages; page++ {
+			opt := &gitlabapi.ListTodosOptions{
+				ListOptions: gitlabapi.ListOptions{PerPage: 100, Page: page},
+				State:       gitlabapi.Ptr(state),
+			}
+			items, resp, err := todos.ListTodos(opt)
+			if err != nil {
+				return nil, err
+			}
+			for _, item := range items {
+				if item.ID == id {
+					n := notificationFromTodo(item)
+					return &n, nil
+				}
+			}
+			if resp == nil || resp.NextPage == 0 {
+				break
+			}
+		}
 	}
 
-	return &notification, nil
+	return nil, nil
+}
+
+// notificationFromTodo maps a GitLab Todo onto the internal NotificationData
+// model. Target/Project/Author/CreatedAt are all pointers on Todo and may be
+// nil (e.g. AlertManagement::Alert todos carry little of the Issue/MR-shaped
+// data) — every access here is nil-checked.
+func notificationFromTodo(todo *gitlabapi.Todo) NotificationData {
+	n := NotificationData{
+		Id:     strconv.FormatInt(todo.ID, 10),
+		Unread: todo.State == "pending",
+		Reason: string(todo.ActionName),
+		Subject: NotificationSubject{
+			Type: string(todo.TargetType),
+		},
+	}
+
+	if todo.CreatedAt != nil {
+		n.UpdatedAt = *todo.CreatedAt
+	}
+
+	if todo.Author != nil {
+		n.Actor = todo.Author.Username
+	}
+
+	if todo.Project != nil {
+		n.Repository = NotificationRepository{
+			Id:       int(todo.Project.ID),
+			Name:     todo.Project.Name,
+			FullName: todo.Project.PathWithNamespace,
+			HtmlUrl:  projectWebUrlFromTodo(todo),
+		}
+	}
+
+	if todo.Target != nil {
+		n.Subject.Title = todo.Target.Title
+		n.Subject.Url = todo.Target.WebURL
+	}
+
+	return n
+}
+
+// projectWebUrlFromTodo derives the project's web base URL by trimming the
+// "/-/issues/N" or "/-/merge_requests/N" suffix off the target's web URL.
+// BasicProject (unlike BasicUser) has no WebURL field of its own, so this is
+// the most direct way to recover it without a second API call.
+func projectWebUrlFromTodo(todo *gitlabapi.Todo) string {
+	if todo.Target == nil || todo.Target.WebURL == "" {
+		return ""
+	}
+	if idx := strings.Index(todo.Target.WebURL, "/-/"); idx > 0 {
+		return todo.Target.WebURL[:idx]
+	}
+	return ""
 }
 
 func MarkNotificationDone(threadId string) error {
-	client, err := getRESTClient()
+	todos, err := getTodosService()
 	if err != nil {
 		return err
 	}
 
-	path := fmt.Sprintf("notifications/threads/%s", threadId)
-	log.Debug("Marking notification as done", "threadId", threadId)
+	id, err := strconv.ParseInt(threadId, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid todo id %q: %w", threadId, err)
+	}
 
-	// DELETE marks as done
-	err = client.Delete(path, nil)
+	log.Debug("Marking todo as done", "id", id)
+	_, err = todos.MarkTodoAsDone(id)
 	if err != nil {
 		return err
 	}
-	log.Info("Successfully marked notification as done", "threadId", threadId)
+	log.Info("Successfully marked todo as done", "id", id)
 	return nil
 }
 
+// MarkNotificationRead marks the todo as done. GitLab's Todos model has no
+// state separate from pending/done, so "mark as read" and "mark as done"
+// converge to the same server call — a deliberate, documented behavior
+// change from the GitHub-backed implementation.
 func MarkNotificationRead(threadId string) error {
-	client, err := getRESTClient()
-	if err != nil {
-		return err
-	}
-
-	path := fmt.Sprintf("notifications/threads/%s", threadId)
-	log.Debug("Marking notification as read", "threadId", threadId)
-
-	// PATCH marks as read - returns 205 Reset Content with no body
-	// The REST client may return an error trying to parse the empty response
-	err = client.Patch(path, nil, nil)
-	if err != nil && err.Error() != "unexpected end of JSON input" {
-		return err
-	}
-	log.Info("Successfully marked notification as read", "threadId", threadId)
-	return nil
+	return MarkNotificationDone(threadId)
 }
 
+// UnsubscribeFromThread has no equivalent in the GitLab Todos API: there is
+// no per-thread subscription endpoint under /todos (confirmed against
+// TodosServiceInterface). Returns an explicit error rather than silently
+// no-op'ing, so callers surface the limitation instead of hiding it.
 func UnsubscribeFromThread(threadId string) error {
-	client, err := getRESTClient()
-	if err != nil {
-		return err
-	}
-
-	log.Debug("Unsubscribing from notification thread", "threadId", threadId)
-
-	// DELETE /notifications/threads/{thread_id}/subscription
-	// Mutes all future notifications for a conversation until you comment on the thread or get an @mention
-	path := fmt.Sprintf("notifications/threads/%s/subscription", threadId)
-	err = client.Delete(path, nil)
-	if err != nil && err.Error() != "unexpected end of JSON input" {
-		return err
-	}
-	log.Info("Successfully unsubscribed from thread", "threadId", threadId)
-	return nil
+	return errors.New("unsubscribe is not supported for GitLab todos")
 }
 
+// MarkAllNotificationsRead marks ALL pending todos for the current GitLab
+// account as done — not just the notifications visible in this section's
+// current query. This is a deliberate, documented behavior change from the
+// GitHub-backed implementation, which only affected the notifications
+// returned by the active filter.
 func MarkAllNotificationsRead() error {
-	client, err := getRESTClient()
+	todos, err := getTodosService()
 	if err != nil {
 		return err
 	}
 
-	log.Debug("Marking all notifications as read")
-
-	// PUT /notifications marks all as read - returns 205 Reset Content with no body
-	// The REST client may return an error trying to parse the empty response
-	err = client.Put("notifications", nil, nil)
-	if err != nil && err.Error() != "unexpected end of JSON input" {
+	log.Debug("Marking all todos as done")
+	_, err = todos.MarkAllTodosAsDone()
+	if err != nil {
 		return err
 	}
-	log.Info("Successfully marked all notifications as read")
+	log.Info("Successfully marked all todos as done")
 	return nil
 }
 
-// CommentResponse represents a GitHub comment with author info
-type CommentResponse struct {
-	User struct {
-		Login string `json:"login"`
-	} `json:"user"`
+// PipelineEnrichment carries the best-effort pipeline status/URL used to
+// enrich a build_failed todo.
+type PipelineEnrichment struct {
+	Status PipelineStatus
+	Url    string
 }
 
-// WorkflowRun represents a GitHub Actions workflow run
-type WorkflowRun struct {
-	Id         int64     `json:"id"`
-	Name       string    `json:"name"`
-	HtmlUrl    string    `json:"html_url"`
-	HeadBranch string    `json:"head_branch"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	Conclusion string    `json:"conclusion"` // success, failure, cancelled, etc.
-}
-
-// WorkflowRunsResponse represents the response from the workflow runs API
-type WorkflowRunsResponse struct {
-	TotalCount   int           `json:"total_count"`
-	WorkflowRuns []WorkflowRun `json:"workflow_runs"`
-}
-
-// FetchCommentAuthor fetches the author of a comment from its API URL
-// apiUrl is like: https://api.github.com/repos/owner/repo/issues/comments/123456
-func FetchCommentAuthor(apiUrl string) (string, error) {
-	if apiUrl == "" {
-		return "", nil
-	}
-
-	client, err := getRESTClient()
+// FetchPipelineForTodo resolves pipeline status/URL for a build_failed todo,
+// reusing FindPipelineForMR (Phase 2, internal/data/prapi.go). Best-effort:
+// any failure to resolve a pipeline is logged at Debug and returns (nil, nil)
+// rather than a fatal error — a todo must still render even when pipeline
+// enrichment isn't available.
+func FetchPipelineForTodo(projectPath string, mrIID int) (*PipelineEnrichment, error) {
+	pipeline, err := FindPipelineForMR(projectPath, mrIID)
 	if err != nil {
-		return "", err
+		log.Debug("no pipeline data available for todo", "err", err)
+		return nil, nil
 	}
-
-	// Extract the path from the full URL
-	const apiPrefix = "https://api.github.com/"
-	path := apiUrl
-	if len(apiUrl) > len(apiPrefix) && apiUrl[:len(apiPrefix)] == apiPrefix {
-		path = apiUrl[len(apiPrefix):]
+	if pipeline.ID == 0 {
+		return nil, nil
 	}
-
-	var response CommentResponse
-	err = client.Get(path, &response)
-	if err != nil {
-		log.Debug("Failed to fetch comment author", "url", apiUrl, "err", err)
-		return "", err
-	}
-
-	return response.User.Login, nil
-}
-
-// FindBestWorkflowRunMatch finds the workflow run closest in time to the notification.
-// Returns nil if no suitable match is found within the time window.
-// Exported for testing.
-func FindBestWorkflowRunMatch(runs []WorkflowRun, notificationUpdatedAt time.Time) *WorkflowRun {
-	if len(runs) == 0 {
-		return nil
-	}
-
-	var bestMatch *WorkflowRun
-	bestDiff := time.Hour * 24 * 365 // Start with a large value
-
-	for i := range runs {
-		run := &runs[i]
-		diff := notificationUpdatedAt.Sub(run.UpdatedAt)
-		if diff < 0 {
-			diff = -diff
-		}
-
-		// Prefer runs that are close in time (within a reasonable window)
-		if diff < bestDiff && diff < time.Hour {
-			bestDiff = diff
-			bestMatch = run
-		}
-	}
-
-	// If no close match, just return the most recent run
-	if bestMatch == nil {
-		bestMatch = &runs[0]
-	}
-
-	return bestMatch
-}
-
-// FetchRecentWorkflowRun fetches recent workflow runs for a repo and finds the best match
-// based on the notification's updated_at timestamp. Returns the HTML URL of the matching run.
-// The title parameter is the notification subject title (e.g., "CI / build (push)")
-// which may help identify the correct workflow run.
-func FetchRecentWorkflowRun(
-	repo string,
-	notificationUpdatedAt time.Time,
-	title string,
-) (string, error) {
-	client, err := getRESTClient()
-	if err != nil {
-		return "", err
-	}
-
-	// Fetch recent workflow runs (limit to 20 for performance)
-	path := fmt.Sprintf("repos/%s/actions/runs?per_page=20", repo)
-	log.Debug("Fetching workflow runs", "repo", repo, "path", path)
-
-	var response WorkflowRunsResponse
-	err = client.Get(path, &response)
-	if err != nil {
-		log.Debug("Failed to fetch workflow runs", "repo", repo, "err", err)
-		return "", err
-	}
-
-	if len(response.WorkflowRuns) == 0 {
-		return "", nil
-	}
-
-	bestMatch := FindBestWorkflowRunMatch(response.WorkflowRuns, notificationUpdatedAt)
-	if bestMatch != nil {
-		log.Debug(
-			"Found matching workflow run",
-			"id",
-			bestMatch.Id,
-			"name",
-			bestMatch.Name,
-			"url",
-			bestMatch.HtmlUrl,
-		)
-		return bestMatch.HtmlUrl, nil
-	}
-
-	return "", nil
+	return &PipelineEnrichment{Status: pipeline.Status, Url: pipeline.WebURL}, nil
 }
