@@ -7,8 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/notificationrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
 )
 
 func TestSetPendingPRAction(t *testing.T) {
@@ -381,9 +383,9 @@ func TestFormatReason(t *testing.T) {
 		{name: "assign", reason: "assign", expected: "Assigned"},
 		{name: "ci_activity", reason: "ci_activity", expected: "CI activity"},
 		{
-			name:     "approval_requested legacy spelling stays intact",
+			name:     "approval_requested is not a real GitLab action and falls back to the raw value",
 			reason:   "approval_requested",
-			expected: "Approval requested",
+			expected: "approval_requested",
 		},
 		{name: "assigned", reason: "assigned", expected: "Assigned"},
 		{name: "mentioned", reason: "mentioned", expected: "Mentioned"},
@@ -408,13 +410,6 @@ func TestFormatReason(t *testing.T) {
 			require.Equal(t, tt.expected, result)
 		})
 	}
-
-	require.NotEqual(
-		t,
-		formatReason("approval_requested"),
-		formatReason("approval_required"),
-		"approval_requested and approval_required are distinct GitHub/GitLab reasons and must format differently",
-	)
 }
 
 func TestNoPanicOnUnknownGitLabValues(t *testing.T) {
@@ -464,4 +459,78 @@ func TestNoPanicOnUnknownGitLabValues(t *testing.T) {
 			)
 		})
 	}
+}
+
+func newViewTestContext() *context.ProgramContext {
+	thm := *theme.DefaultTheme
+	return &context.ProgramContext{
+		Theme:  thm,
+		Styles: context.InitStyles(thm),
+	}
+}
+
+func TestViewHasCommentSectionVisibility(t *testing.T) {
+	tests := []struct {
+		name             string
+		latestCommentUrl string
+		expectSection    bool
+	}{
+		{
+			name:             "empty latest comment url hides the has comment section entirely",
+			latestCommentUrl: "",
+			expectSection:    false,
+		},
+		{
+			name:             "non empty latest comment url shows the has comment section as yes",
+			latestCommentUrl: "https://gitlab.com/group/proj/-/merge_requests/9#note_1",
+			expectSection:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel(newViewTestContext())
+			m.SetWidth(80)
+			m.SetRow(&notificationrow.Data{
+				Notification: data.NotificationData{
+					Subject: data.NotificationSubject{
+						Title:            "Some title",
+						Type:             "MergeRequest",
+						LatestCommentUrl: tt.latestCommentUrl,
+					},
+					Repository: data.NotificationRepository{FullName: "group/proj"},
+				},
+			})
+
+			view := m.View()
+
+			if tt.expectSection {
+				require.Contains(t, view, "Has Comment")
+				require.Contains(t, view, "Yes")
+			} else {
+				require.NotContains(t, view, "Has Comment")
+			}
+		})
+	}
+}
+
+func TestViewUrlLabelReplacesApiUrl(t *testing.T) {
+	m := NewModel(newViewTestContext())
+	m.SetWidth(80)
+	subjectUrl := "https://gitlab.com/group/proj/-/merge_requests/9"
+	m.SetRow(&notificationrow.Data{
+		Notification: data.NotificationData{
+			Subject: data.NotificationSubject{
+				Title: "Some title",
+				Type:  "MergeRequest",
+				Url:   subjectUrl,
+			},
+			Repository: data.NotificationRepository{FullName: "group/proj"},
+		},
+	})
+
+	view := m.View()
+
+	require.NotContains(t, view, "API URL")
+	require.Contains(t, view, subjectUrl)
 }

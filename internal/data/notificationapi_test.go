@@ -398,6 +398,7 @@ func TestNotificationFromTodo(t *testing.T) {
 			},
 			Author: &gitlabapi.BasicUser{Username: "alice"},
 			Target: &gitlabapi.TodoTarget{
+				IID:    42,
 				Title:  "Fix the bug",
 				WebURL: "https://gitlab.com/group/proj/-/merge_requests/9",
 			},
@@ -412,6 +413,7 @@ func TestNotificationFromTodo(t *testing.T) {
 		assert.Equal(t, "MergeRequest", result.Subject.Type)
 		assert.Equal(t, "Fix the bug", result.Subject.Title)
 		assert.Equal(t, "https://gitlab.com/group/proj/-/merge_requests/9", result.Subject.Url)
+		assert.Equal(t, int64(42), result.Subject.IID)
 		assert.Equal(t, "group/proj", result.Repository.FullName)
 		assert.Equal(t, "proj", result.Repository.Name)
 		assert.Equal(t, 7, result.Repository.Id)
@@ -468,6 +470,23 @@ func TestNotificationFromTodo(t *testing.T) {
 			Project: &gitlabapi.BasicProject{PathWithNamespace: "group/proj"},
 		})
 		assert.Equal(t, "", result.Repository.HtmlUrl)
+	})
+
+	t.Run("maps the target iid onto the subject iid", func(t *testing.T) {
+		result := notificationFromTodo(&gitlabapi.Todo{
+			ID:     1,
+			State:  "pending",
+			Target: &gitlabapi.TodoTarget{IID: 42},
+		})
+		assert.Equal(t, int64(42), result.Subject.IID)
+	})
+
+	t.Run("nil target leaves the subject iid at zero without panic", func(t *testing.T) {
+		var result NotificationData
+		require.NotPanics(t, func() {
+			result = notificationFromTodo(&gitlabapi.Todo{ID: 1, State: "pending"})
+		})
+		assert.Equal(t, int64(0), result.Subject.IID)
 	})
 
 	t.Run("done state maps to unread false", func(t *testing.T) {

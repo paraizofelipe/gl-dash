@@ -51,6 +51,7 @@ type NotificationSubject struct {
 	Url              string `json:"url"`
 	LatestCommentUrl string `json:"latest_comment_url"`
 	Type             string `json:"type"`
+	IID              int64  `json:"iid"`
 }
 
 type NotificationRepository struct {
@@ -297,6 +298,7 @@ func notificationFromTodo(todo *gitlabapi.Todo) NotificationData {
 	if todo.Target != nil {
 		n.Subject.Title = todo.Target.Title
 		n.Subject.Url = todo.Target.WebURL
+		n.Subject.IID = todo.Target.IID
 	}
 
 	return n

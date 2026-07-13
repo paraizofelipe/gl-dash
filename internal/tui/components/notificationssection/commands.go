@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -244,6 +245,14 @@ type UpdateNotificationReadStateMsg struct {
 	Unread bool
 }
 
+func isOpenableURL(rawUrl string) bool {
+	u, err := url.Parse(rawUrl)
+	if err != nil {
+		return false
+	}
+	return u.Scheme != "" && u.Host != ""
+}
+
 // openInBrowser marks the current notification as read and opens it in the browser
 func (m *Model) openInBrowser() tea.Cmd {
 	notification := m.GetCurrNotification()
@@ -253,6 +262,12 @@ func (m *Model) openInBrowser() tea.Cmd {
 
 	notificationId := notification.GetId()
 	notificationUrl := notification.GetUrl()
+
+	if !isOpenableURL(notificationUrl) {
+		return func() tea.Msg {
+			return constants.ErrMsg{Err: errors.New("notification has no openable url")}
+		}
+	}
 
 	return tea.Batch(
 		func() tea.Msg {

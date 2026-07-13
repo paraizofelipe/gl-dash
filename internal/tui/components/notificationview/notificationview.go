@@ -261,17 +261,15 @@ func (m Model) View() string {
 	s.WriteString(sectionStyle.Render(lastReadRow))
 	s.WriteString("\n")
 
-	hasComment := "No"
 	if notification.Subject.LatestCommentUrl != "" {
-		hasComment = "Yes"
+		commentRow := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			labelStyle.Render("Has Comment"),
+			valueStyle.Render("Yes"),
+		)
+		s.WriteString(sectionStyle.Render(commentRow))
+		s.WriteString("\n")
 	}
-	commentRow := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		labelStyle.Render("Has Comment"),
-		valueStyle.Render(hasComment),
-	)
-	s.WriteString(sectionStyle.Render(commentRow))
-	s.WriteString("\n")
 
 	idRow := lipgloss.JoinHorizontal(
 		lipgloss.Top,
@@ -284,7 +282,7 @@ func (m Model) View() string {
 	if notification.Subject.Url != "" {
 		urlRow := lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			labelStyle.Render("API URL"),
+			labelStyle.Render("URL"),
 			faintValueStyle.Render(notification.Subject.Url),
 		)
 		s.WriteString(sectionStyle.Render(urlRow))
@@ -295,17 +293,17 @@ func (m Model) View() string {
 
 func getTypeIcon(subjectType string) string {
 	switch subjectType {
-	case "PullRequest", "MergeRequest":
+	case data.SubjectTypePullRequest, data.SubjectTypeMergeRequest:
 		return ""
-	case "Issue":
+	case data.SubjectTypeIssue:
 		return ""
-	case "Discussion":
+	case data.SubjectTypeDiscussion:
 		return ""
-	case "Release":
+	case data.SubjectTypeRelease:
 		return ""
-	case "Commit":
+	case data.SubjectTypeCommit:
 		return ""
-	case "CheckSuite":
+	case data.SubjectTypeCheckSuite:
 		return ""
 	default:
 		return ""
@@ -314,37 +312,35 @@ func getTypeIcon(subjectType string) string {
 
 func formatReason(reason string) string {
 	switch reason {
-	case "subscribed":
+	case data.ReasonSubscribed:
 		return "Subscribed"
-	case "review_requested":
+	case data.ReasonReviewRequested:
 		return "Review requested"
-	case "author":
+	case data.ReasonAuthor:
 		return "Author"
-	case "comment":
+	case data.ReasonComment:
 		return "Comment"
-	case "mention":
+	case data.ReasonMention:
 		return "Mentioned"
-	case "team_mention":
+	case data.ReasonTeamMention:
 		return "Team mentioned"
-	case "state_change":
+	case data.ReasonStateChange:
 		return "State changed"
-	case "assign":
+	case data.ReasonAssign:
 		return "Assigned"
-	case "ci_activity":
+	case data.ReasonCIActivity:
 		return "CI activity"
-	case "approval_requested":
-		return "Approval requested"
-	case "assigned":
+	case data.ReasonAssigned:
 		return "Assigned"
-	case "mentioned":
+	case data.ReasonMentioned:
 		return "Mentioned"
-	case "build_failed":
+	case data.ReasonBuildFailed:
 		return "Build failed"
-	case "marked":
+	case data.ReasonMarked:
 		return "Marked"
-	case "approval_required":
+	case data.ReasonApprovalRequired:
 		return "Approval required"
-	case "directly_addressed":
+	case data.ReasonDirectlyAddressed:
 		return "Directly addressed"
 	default:
 		return reason

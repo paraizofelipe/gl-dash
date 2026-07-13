@@ -2,12 +2,15 @@ package notificationssection
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	gitlabapi "gitlab.com/gitlab-org/api/client-go"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
@@ -360,5 +363,121 @@ func TestOpenInBrowser_PropagatesOpenURLFuncError(t *testing.T) {
 	}
 	if !errors.Is(errMsg.Err, wantErr) {
 		t.Fatalf("ErrMsg.Err = %v, want %v", errMsg.Err, wantErr)
+	}
+}
+
+func newModelWithCurrentNotification(
+	id string,
+	subject data.NotificationSubject,
+	repo data.NotificationRepository,
+) Model {
+	return Model{
+		Notifications: []notificationrow.Data{
+			{
+				Notification: data.NotificationData{
+					Id:         id,
+					Subject:    subject,
+					Repository: repo,
+				},
+			},
+		},
+	}
+}
+
+func newCountingMockRESTClient(t *testing.T) (*gitlabapi.Client, *int) {
+	t.Helper()
+	callCount := new(int)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*callCount++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	client, err := gitlabapi.NewClient(
+		"test-token",
+		gitlabapi.WithBaseURL(server.URL),
+		gitlabapi.WithoutRetries(),
+	)
+	if err != nil {
+		t.Fatalf("failed to build mock gitlab client: %v", err)
+	}
+	return client, callCount
+}
+
+func TestOpenInBrowser_UnopenableURLDoesNotOpenOrMarkAsRead(t *testing.T) {
+	tests := []struct {
+		name    string
+		subject data.NotificationSubject
+		repo    data.NotificationRepository
+		wantUrl string
+	}{
+		{
+			name: "empty url",
+			subject: data.NotificationSubject{
+				Title: "Test",
+				Type:  "MergeRequest",
+			},
+			repo:    data.NotificationRepository{FullName: "group/proj"},
+			wantUrl: "",
+		},
+		{
+			name: "relative url without scheme or host",
+			subject: data.NotificationSubject{
+				Title: "Test",
+				Type:  "PullRequest",
+				Url:   "https://api.github.com/repos/owner/repo/pulls/123",
+			},
+			repo:    data.NotificationRepository{FullName: "owner/repo"},
+			wantUrl: "/pull/123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModelWithCurrentNotification("notif-unopenable", tt.subject, tt.repo)
+
+			if got := m.Notifications[0].GetUrl(); got != tt.wantUrl {
+				t.Fatalf("test fixture invalid: GetUrl() = %q, want %q", got, tt.wantUrl)
+			}
+
+			originalOpenURLFunc := openURLFunc
+			defer func() { openURLFunc = originalOpenURLFunc }()
+			var openURLCallCount int
+			openURLFunc = func(string) error {
+				openURLCallCount++
+				return nil
+			}
+
+			mockClient, restCallCount := newCountingMockRESTClient(t)
+			data.SetRESTClient(mockClient)
+			defer data.SetRESTClient(nil)
+
+			cmd := m.openInBrowser()
+			if cmd == nil {
+				t.Fatal("openInBrowser() returned a nil cmd")
+			}
+
+			msg := cmd()
+
+			if _, isBatch := msg.(tea.BatchMsg); isBatch {
+				t.Fatalf(
+					"openInBrowser() for an unopenable url should not run the mark-as-read/open batch, got tea.BatchMsg",
+				)
+			}
+
+			errMsg, ok := msg.(constants.ErrMsg)
+			if !ok {
+				t.Fatalf("expected constants.ErrMsg, got %T (%v)", msg, msg)
+			}
+			if errMsg.Err == nil {
+				t.Fatal("expected constants.ErrMsg.Err to be a non-nil error")
+			}
+
+			if openURLCallCount != 0 {
+				t.Fatalf("openURLFunc call count = %d, want 0", openURLCallCount)
+			}
+			if *restCallCount != 0 {
+				t.Fatalf("mark-as-read HTTP call count = %d, want 0", *restCallCount)
+			}
+		})
 	}
 }

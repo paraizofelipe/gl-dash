@@ -2,7 +2,6 @@ package notificationrow
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -41,22 +40,13 @@ func (d Data) GetRepoNameWithOwner() string {
 }
 
 func (d Data) GetNumber() int {
-	subject := d.Notification.Subject
-	if subject.Type == "PullRequest" || subject.Type == "Issue" || subject.Type == "MergeRequest" {
-		numStr := extractNumberFromUrl(subject.Url)
-		if num, err := strconv.Atoi(numStr); err == nil {
-			return num
-		}
-	}
-	return 0
+	return int(d.Notification.Subject.IID)
 }
 
-// isApiFollowUpUrl reports whether rawUrl looks like a GitHub REST API URL
-// (e.g. https://api.github.com/repos/owner/repo/pulls/123 or the GHE
-// equivalent under /api/v3/repos/...) rather than a ready-to-use web URL.
-// GitLab's Todo.Target.WebURL is always a web URL and never contains
-// "/repos/", so this is a reliable discriminator between the two shapes
-// that both flow through the same NotificationSubject.Url field.
+// isApiFollowUpUrl reports whether rawUrl is a REST API URL rather than a
+// ready-to-use web URL. GitLab's Todo.Target.WebURL is always a web URL and
+// never contains "/repos/"; the check exists for legacy notification data
+// shaped like GitHub's API responses, which do use that segment.
 func isApiFollowUpUrl(rawUrl string) bool {
 	return strings.Contains(rawUrl, "/repos/")
 }
@@ -70,26 +60,26 @@ func (d Data) GetUrl() string {
 	}
 
 	switch subject.Type {
-	case "PullRequest":
+	case data.SubjectTypePullRequest:
 		return fmt.Sprintf("%s/pull/%s", baseUrl, extractNumberFromUrl(subject.Url))
-	case "Issue":
+	case data.SubjectTypeIssue:
 		return fmt.Sprintf("%s/issues/%s", baseUrl, extractNumberFromUrl(subject.Url))
-	case "Discussion":
+	case data.SubjectTypeDiscussion:
 		num := extractNumberFromUrl(subject.Url)
 		if num != "" {
 			return fmt.Sprintf("%s/discussions/%s", baseUrl, num)
 		}
 		return fmt.Sprintf("%s/discussions", baseUrl)
-	case "Release":
+	case data.SubjectTypeRelease:
 		return fmt.Sprintf("%s/releases", baseUrl)
-	case "Commit":
+	case data.SubjectTypeCommit:
 		return fmt.Sprintf("%s/commits", baseUrl)
-	case "CheckSuite":
+	case data.SubjectTypeCheckSuite:
 		if d.ResolvedUrl != "" {
 			return d.ResolvedUrl
 		}
 		return fmt.Sprintf("%s/actions", baseUrl)
-	case "MergeRequest":
+	case data.SubjectTypeMergeRequest:
 		return baseUrl
 	default:
 		return baseUrl
@@ -148,73 +138,73 @@ func extractNumberFromUrl(apiUrl string) string {
 // GenerateActivityDescription creates a human-readable description of the notification activity
 func GenerateActivityDescription(reason, subjectType, actor string) string {
 	switch reason {
-	case "comment":
+	case data.ReasonComment:
 		if actor != "" {
 			switch subjectType {
-			case "PullRequest":
+			case data.SubjectTypePullRequest:
 				return fmt.Sprintf("@%s commented on this pull request", actor)
-			case "Issue":
+			case data.SubjectTypeIssue:
 				return fmt.Sprintf("@%s commented on this issue", actor)
 			default:
 				return fmt.Sprintf("@%s commented", actor)
 			}
 		}
 		return "New comment"
-	case "review_requested":
+	case data.ReasonReviewRequested:
 		if actor != "" {
 			return fmt.Sprintf("@%s requested your review", actor)
 		}
 		return "Review requested"
-	case "mention":
+	case data.ReasonMention:
 		if actor != "" {
 			return fmt.Sprintf("@%s mentioned you", actor)
 		}
 		return "You were mentioned"
-	case "author":
+	case data.ReasonAuthor:
 		return "Activity on your thread"
-	case "assign":
+	case data.ReasonAssign:
 		return "You were assigned"
-	case "state_change":
+	case data.ReasonStateChange:
 		switch subjectType {
-		case "PullRequest":
+		case data.SubjectTypePullRequest:
 			return "Pull request state changed"
-		case "Issue":
+		case data.SubjectTypeIssue:
 			return "Issue state changed"
 		default:
 			return "State changed"
 		}
-	case "ci_activity":
+	case data.ReasonCIActivity:
 		return "CI activity"
-	case "subscribed":
+	case data.ReasonSubscribed:
 		if actor != "" {
 			switch subjectType {
-			case "PullRequest":
+			case data.SubjectTypePullRequest:
 				return fmt.Sprintf("@%s commented on this pull request", actor)
-			case "Issue":
+			case data.SubjectTypeIssue:
 				return fmt.Sprintf("@%s commented on this issue", actor)
 			default:
 				return "Activity on subscribed thread"
 			}
 		}
 		return "Activity on subscribed thread"
-	case "team_mention":
+	case data.ReasonTeamMention:
 		return "Your team was mentioned"
-	case "security_alert":
+	case data.ReasonSecurityAlert:
 		return "Security vulnerability detected"
-	case "assigned":
+	case data.ReasonAssigned:
 		return "You were assigned"
-	case "mentioned":
+	case data.ReasonMentioned:
 		if actor != "" {
 			return fmt.Sprintf("@%s mentioned you", actor)
 		}
 		return "You were mentioned"
-	case "build_failed":
+	case data.ReasonBuildFailed:
 		return "Pipeline failed"
-	case "marked":
+	case data.ReasonMarked:
 		return "Manually marked as a to-do"
-	case "approval_required":
+	case data.ReasonApprovalRequired:
 		return "Your approval is required"
-	case "directly_addressed":
+	case data.ReasonDirectlyAddressed:
 		if actor != "" {
 			return fmt.Sprintf("@%s addressed you directly", actor)
 		}

@@ -72,100 +72,80 @@ func TestGetNumber(t *testing.T) {
 		expected int
 	}{
 		{
-			name: "PullRequest returns extracted number",
+			name: "positive IID returns the same int value",
 			data: Data{
 				Notification: data.NotificationData{
 					Subject: data.NotificationSubject{
-						Type: "PullRequest",
-						Url:  "https://api.github.com/repos/owner/repo/pulls/123",
-					},
-				},
-			},
-			expected: 123,
-		},
-		{
-			name: "Issue returns extracted number",
-			data: Data{
-				Notification: data.NotificationData{
-					Subject: data.NotificationSubject{
-						Type: "Issue",
-						Url:  "https://api.github.com/repos/owner/repo/issues/456",
-					},
-				},
-			},
-			expected: 456,
-		},
-		{
-			name: "MergeRequest returns extracted number",
-			data: Data{
-				Notification: data.NotificationData{
-					Subject: data.NotificationSubject{
-						Type: "MergeRequest",
-						Url:  "https://gitlab.com/group/proj/-/merge_requests/42",
+						IID: 42,
 					},
 				},
 			},
 			expected: 42,
 		},
 		{
-			name: "MergeRequest with non-numeric URL returns 0",
+			name: "zero IID returns zero",
 			data: Data{
 				Notification: data.NotificationData{
 					Subject: data.NotificationSubject{
-						Type: "MergeRequest",
-						Url:  "https://gitlab.com/group/proj/-/merge_requests/abc",
+						IID: 0,
 					},
 				},
 			},
 			expected: 0,
 		},
 		{
-			name: "Discussion returns 0",
+			name:     "zero value data returns zero",
+			data:     Data{},
+			expected: 0,
+		},
+		{
+			name: "large IID is converted to int without truncation",
+			data: Data{
+				Notification: data.NotificationData{
+					Subject: data.NotificationSubject{
+						IID: 999999,
+					},
+				},
+			},
+			expected: 999999,
+		},
+		{
+			name: "IID applies regardless of subject type",
 			data: Data{
 				Notification: data.NotificationData{
 					Subject: data.NotificationSubject{
 						Type: "Discussion",
-						Url:  "https://api.github.com/repos/owner/repo/discussions/789",
+						IID:  7,
 					},
 				},
 			},
-			expected: 0,
+			expected: 7,
 		},
 		{
-			name: "Release returns 0",
-			data: Data{
-				Notification: data.NotificationData{
-					Subject: data.NotificationSubject{
-						Type: "Release",
-						Url:  "https://api.github.com/repos/owner/repo/releases/v1.0.0",
-					},
-				},
-			},
-			expected: 0,
-		},
-		{
-			name: "empty URL returns 0",
+			name: "url based number is ignored when IID is zero",
 			data: Data{
 				Notification: data.NotificationData{
 					Subject: data.NotificationSubject{
 						Type: "PullRequest",
-						Url:  "",
+						Url:  "https://api.github.com/repos/owner/repo/pulls/123",
+						IID:  0,
 					},
 				},
 			},
 			expected: 0,
 		},
 		{
-			name: "non-numeric segment returns 0",
+			name: "IID wins even when url suggests a different number",
 			data: Data{
 				Notification: data.NotificationData{
 					Subject: data.NotificationSubject{
-						Type: "PullRequest",
-						Url:  "https://api.github.com/repos/owner/repo/pulls/abc",
+						Type: "MergeRequest",
+						Url:  "https://gitlab.com/group/proj/-/merge_requests/999",
+						IID:  42,
 					},
 				},
 			},
-			expected: 0,
+			expected: 42,
 		},
 	}
 
