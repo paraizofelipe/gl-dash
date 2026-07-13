@@ -1,0 +1,68 @@
+---
+title: Project Aliases
+---
+
+You can use the `projectAliases` setting to map short aliases (as keys) to a base
+project path (as values). This lets you use `project:@alias/rest` (or the
+`repo:@alias/rest` synonym) in the search bar instead of typing out a long, nested
+GitLab namespace every time.
+
+## Examples
+
+### Basic Alias
+
+```yaml
+projectAliases:
+  catalogo: luizalabs/canais-digitais/navegacao/catalogo
+```
+
+With this configuration, typing `project:@catalogo/taz` in the search bar expands to:
+
+```
+project:luizalabs/canais-digitais/navegacao/catalogo/taz
+```
+
+The alias is resolved by concatenating the configured base path with everything
+after the first `/` following the alias.
+
+### Alias Without a Suffix
+
+If you use the alias on its own, without anything after it, it expands to just the
+base path:
+
+```
+project:@catalogo
+```
+
+expands to:
+
+```
+project:luizalabs/canais-digitais/navegacao/catalogo
+```
+
+### The `repo:` Synonym
+
+`repo:@alias/rest` works the same way as `project:@alias/rest` and keeps its own
+`repo:` prefix in the expanded query:
+
+```
+repo:@catalogo/taz
+```
+
+expands to:
+
+```
+repo:luizalabs/canais-digitais/navegacao/catalogo/taz
+```
+
+## Autocomplete
+
+While typing `project:@` or `repo:@` in the search bar, `gl-dash` suggests the
+aliases configured in `projectAliases`.
+
+## Unknown Aliases
+
+If the alias isn't found in `projectAliases`, the token is left exactly as typed
+(for example, `project:@unknown` stays `project:@unknown`). GitLab will simply
+return no results for that filter — `gl-dash` doesn't raise an error for unknown
+aliases.

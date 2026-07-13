@@ -236,8 +236,49 @@ func (m *BaseModel) SyncSmartFilterWithSearchValue() {
 	m.IsFilteredByCurrentRemote = m.HasCurrentRepoNameInConfiguredFilter()
 }
 
+func (m *BaseModel) projectAliases() map[string]string {
+	if m.Ctx == nil || m.Ctx.Config == nil {
+		return nil
+	}
+	return m.Ctx.Config.ProjectAliases
+}
+
+func expandProjectAliasToken(token string, aliases map[string]string) string {
+	if len(aliases) == 0 {
+		return token
+	}
+	for _, qualifier := range []string{"project", "repo"} {
+		rest, ok := strings.CutPrefix(token, qualifier+":@")
+		if !ok {
+			continue
+		}
+		alias, remainder, _ := strings.Cut(rest, "/")
+		base, found := aliases[alias]
+		if !found {
+			return token
+		}
+		if remainder == "" {
+			return qualifier + ":" + base
+		}
+		return qualifier + ":" + strings.TrimSuffix(base, "/") + "/" + remainder
+	}
+	return token
+}
+
+func expandProjectAliases(query string, aliases map[string]string) string {
+	if len(aliases) == 0 {
+		return query
+	}
+	tokens := strings.Fields(query)
+	for i, token := range tokens {
+		tokens[i] = expandProjectAliasToken(token, aliases)
+	}
+	return strings.Join(tokens, " ")
+}
+
 func (m *BaseModel) GetSearchValue() string {
 	searchValue := m.enrichSearchWithTemplateVars()
+	searchValue = expandProjectAliases(searchValue, m.projectAliases())
 	if !m.Ctx.HasGHRepo() {
 		return searchValue
 	}

@@ -3,6 +3,8 @@ package fuzzyselect
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 
@@ -12,10 +14,11 @@ import (
 
 // SearchQuerySource implements the Source interface.
 type SearchQuerySource struct {
-	Labels    []data.Label
-	LabelsErr error
-	Users     []data.User
-	UsersErr  error
+	Labels         []data.Label
+	LabelsErr      error
+	Users          []data.User
+	UsersErr       error
+	ProjectAliases map[string]string
 }
 
 func authorPrefix(info WordInfo) (string, bool) {
@@ -42,6 +45,18 @@ func labelPrefix(info WordInfo) (string, bool) {
 	return "", false
 }
 
+func projectPrefix(info WordInfo) (string, bool) {
+	if strings.HasPrefix(info.Word, "project:") {
+		return "project:", true
+	}
+
+	if strings.HasPrefix(info.Word, "repo:") {
+		return "repo:", true
+	}
+
+	return "", false
+}
+
 func (*SearchQuerySource) ExtractContext(input string, cursorPos tea.Position) Context {
 	info := ExtractWordAtCursor(input, cursorPos)
 	if prefix, ok := authorPrefix(info); ok {
@@ -53,6 +68,14 @@ func (*SearchQuerySource) ExtractContext(input string, cursorPos tea.Position) C
 		}
 	}
 	if prefix, ok := labelPrefix(info); ok {
+		c, _ := strings.CutPrefix(info.Word, prefix)
+		return Context{
+			Start:   tea.Position{X: info.StartIdx.X + len(prefix), Y: info.StartIdx.Y},
+			End:     info.EndIdx,
+			Content: c,
+		}
+	}
+	if prefix, ok := projectPrefix(info); ok {
 		c, _ := strings.CutPrefix(info.Word, prefix)
 		return Context{
 			Start:   tea.Position{X: info.StartIdx.X + len(prefix), Y: info.StartIdx.Y},
@@ -90,6 +113,18 @@ func (src *SearchQuerySource) Suggestions(input string, cursorPos tea.Position) 
 			suggestions = append(suggestions, Suggestion{
 				Value:  label.Name,
 				Detail: strings.TrimSpace(label.Description),
+			})
+		}
+		return suggestions
+	}
+
+	if _, ok := projectPrefix(wordInfo); ok {
+		aliases := slices.Sorted(maps.Keys(src.ProjectAliases))
+		suggestions := make([]Suggestion, 0, len(aliases))
+		for _, alias := range aliases {
+			suggestions = append(suggestions, Suggestion{
+				Value:  "@" + alias,
+				Detail: src.ProjectAliases[alias],
 			})
 		}
 		return suggestions

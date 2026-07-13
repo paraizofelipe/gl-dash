@@ -121,6 +121,7 @@ keybindings:
         gh issue open --repo {{.RepoName}} {{.PrNumber}}
 repoPaths:
   dlvhdr/*: ~/code/personal/*
+projectAliases: {}
 theme:
   ui:
     sectionsShowCount: true

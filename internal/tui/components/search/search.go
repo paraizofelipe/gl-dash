@@ -107,6 +107,9 @@ func (m *Model) Repo() (cmpcontroller.RepoRef, bool) {
 		if !found {
 			continue
 		}
+		if strings.HasPrefix(repo, "@") {
+			continue
+		}
 		idx := strings.LastIndex(repo, "/")
 		if idx < 0 {
 			return cmpcontroller.RepoRef{}, false
@@ -122,7 +125,13 @@ func (m *Model) Repo() (cmpcontroller.RepoRef, bool) {
 
 func (m *Model) Focus() tea.Cmd {
 	repo, _ := m.Repo()
-	m.cmpctl.SetAutocompleteSource(&fuzzyselect.SearchQuerySource{})
+	var projectAliases map[string]string
+	if m.ctx != nil && m.ctx.Config != nil {
+		projectAliases = m.ctx.Config.ProjectAliases
+	}
+	m.cmpctl.SetAutocompleteSource(&fuzzyselect.SearchQuerySource{
+		ProjectAliases: projectAliases,
+	})
 	cmd := m.cmpctl.Enter(cmpcontroller.EnterOptions{
 		Mode:                             cmpcontroller.ModeSearch,
 		Prompt:                           "",

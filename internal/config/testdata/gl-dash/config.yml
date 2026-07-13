@@ -33,6 +33,7 @@ defaults:
   issuesLimit: 5
 repoPaths:
   dlvhdr/*: ~/code/personal/*
+projectAliases: {}
 confirmQuit: false
 
 keybindings:

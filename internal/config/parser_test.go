@@ -206,6 +206,27 @@ func TestGetDefaultConfig_LabelsColumnVisibleByDefault(t *testing.T) {
 	require.False(t, *cfg.Defaults.Layout.Prs.Labels.Hidden)
 }
 
+func TestGetDefaultConfig_ProjectAliasesEmptyByDefault(t *testing.T) {
+	cfg := ConfigParser{}.getDefaultConfig()
+	require.NotNil(t, cfg.ProjectAliases)
+	require.Empty(t, cfg.ProjectAliases)
+}
+
+func TestParseConfig_ProjectAliasesPopulated(t *testing.T) {
+	dir := t.TempDir()
+	configPath := path.Join(dir, "config.yml")
+	err := os.WriteFile(configPath, []byte("projectAliases:\n  catalogo: luizalabs/canais-digitais/navegacao/catalogo\n"), 0o600)
+	testutils.AssertNoError(t, err)
+
+	cfg, err := ParseConfig(Location{
+		ConfigFlag:       configPath,
+		SkipGlobalConfig: true,
+	})
+
+	testutils.AssertNoError(t, err)
+	require.Equal(t, "luizalabs/canais-digitais/navegacao/catalogo", cfg.ProjectAliases["catalogo"])
+}
+
 func loadExpected(t *testing.T, fpath string) Config {
 	t.Helper()
 	cwd := Testwd(t)

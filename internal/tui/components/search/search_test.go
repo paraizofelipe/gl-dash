@@ -92,6 +92,44 @@ func TestModel_Repo(t *testing.T) {
 			wantRepo:  cmpcontroller.RepoRef{},
 			wantFound: false,
 		},
+		{
+			name:      "unexpanded alias with slash and remainder is not a valid repo",
+			value:     "project:@catalogo/taz",
+			wantRepo:  cmpcontroller.RepoRef{},
+			wantFound: false,
+		},
+		{
+			name:      "unexpanded alias without remainder is not a valid repo",
+			value:     "project:@catalogo",
+			wantRepo:  cmpcontroller.RepoRef{},
+			wantFound: false,
+		},
+		{
+			name:      "unexpanded alias mixed with other qualifiers is not a valid repo",
+			value:     "is:open project:@catalogo/taz author:@me",
+			wantRepo:  cmpcontroller.RepoRef{},
+			wantFound: false,
+		},
+		{
+			name:  "unexpanded alias token is skipped in favor of a later literal project token",
+			value: "project:@catalogo/taz project:dlvhdr/gh-dash",
+			wantRepo: cmpcontroller.RepoRef{
+				NameWithOwner: "dlvhdr/gh-dash",
+				Owner:         "dlvhdr",
+				Name:          "gh-dash",
+			},
+			wantFound: true,
+		},
+		{
+			name:  "already expanded literal path with nested subgroups is still found",
+			value: "project:luizalabs/canais-digitais/navegacao/catalogo/taz",
+			wantRepo: cmpcontroller.RepoRef{
+				NameWithOwner: "luizalabs/canais-digitais/navegacao/catalogo/taz",
+				Owner:         "luizalabs/canais-digitais/navegacao/catalogo",
+				Name:          "taz",
+			},
+			wantFound: true,
+		},
 	}
 
 	ctx := testContext(t)
@@ -122,4 +160,49 @@ func TestModel_Repo_InitialValueIsHonoredWithoutSetValue(t *testing.T) {
 		Owner:         "group",
 		Name:          "proj",
 	}, repo)
+}
+
+func TestModel_Focus_PopulatesProjectAliasSuggestions(t *testing.T) {
+	ctx := testContext(t)
+	ctx.Config.ProjectAliases = map[string]string{
+		"catalogo": "luizalabs/canais-digitais/navegacao/catalogo",
+	}
+
+	m := NewModel(ctx, SearchOptions{})
+	m.Focus()
+	m.SetValue("project:@")
+	m.CursorEnd()
+	m.cmpctl.Filter()
+	m.cmpctl.ShowCompletions()
+
+	view := m.ViewCompletions()
+
+	require.Contains(t, view, "@catalogo")
+}
+
+func TestModel_Focus_NoProjectAliasesConfiguredShowsNoAliasSuggestions(t *testing.T) {
+	ctx := testContext(t)
+	ctx.Config.ProjectAliases = map[string]string{}
+
+	m := NewModel(ctx, SearchOptions{})
+	m.Focus()
+	m.SetValue("project:@")
+	m.CursorEnd()
+	m.cmpctl.Filter()
+	m.cmpctl.ShowCompletions()
+
+	view := m.ViewCompletions()
+
+	require.NotContains(t, view, "@catalogo")
+}
+
+func TestModel_Focus_NilConfigDoesNotPanic(t *testing.T) {
+	ctx := testContext(t)
+	ctx.Config = nil
+
+	m := NewModel(ctx, SearchOptions{})
+
+	require.NotPanics(t, func() {
+		m.Focus()
+	})
 }

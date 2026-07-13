@@ -325,6 +325,7 @@ type Config struct {
 	Defaults                 Defaults                     `yaml:"defaults"`
 	Keybindings              Keybindings                  `yaml:"keybindings"`
 	RepoPaths                map[string]string            `yaml:"repoPaths"`
+	ProjectAliases           map[string]string            `yaml:"projectAliases"`
 	Theme                    *ThemeConfig                 `yaml:"theme,omitempty"           validate:"omitempty"`
 	Pager                    Pager                        `yaml:"pager"`
 	ConfirmQuit              bool                         `yaml:"confirmQuit"`
@@ -485,7 +486,8 @@ func (parser ConfigParser) getDefaultConfig() Config {
 			Issues:    []Keybinding{},
 			Prs:       []Keybinding{},
 		},
-		RepoPaths: map[string]string{},
+		RepoPaths:      map[string]string{},
+		ProjectAliases: map[string]string{},
 		Theme: &ThemeConfig{
 			Ui: UIThemeConfig{
 				SectionsShowCount: true,

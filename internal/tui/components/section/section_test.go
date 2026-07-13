@@ -874,6 +874,226 @@ func TestGetPromptConfirmation(t *testing.T) {
 	}
 }
 
+func TestExpandProjectAliasToken(t *testing.T) {
+	aliases := map[string]string{
+		"catalogo": "luizalabs/canais-digitais/navegacao/catalogo",
+	}
+
+	tests := []struct {
+		name    string
+		token   string
+		aliases map[string]string
+		want    string
+	}{
+		{
+			name:    "project alias with rest of path expands",
+			token:   "project:@catalogo/taz",
+			aliases: aliases,
+			want:    "project:luizalabs/canais-digitais/navegacao/catalogo/taz",
+		},
+		{
+			name:    "project alias alone expands without trailing slash",
+			token:   "project:@catalogo",
+			aliases: aliases,
+			want:    "project:luizalabs/canais-digitais/navegacao/catalogo",
+		},
+		{
+			name:    "unconfigured alias passes through verbatim",
+			token:   "project:@inexistente",
+			aliases: aliases,
+			want:    "project:@inexistente",
+		},
+		{
+			name:    "token without at symbol is untouched",
+			token:   "project:foo/bar",
+			aliases: aliases,
+			want:    "project:foo/bar",
+		},
+		{
+			name:    "repo prefix is a synonym and keeps its own prefix",
+			token:   "repo:@catalogo/taz",
+			aliases: aliases,
+			want:    "repo:luizalabs/canais-digitais/navegacao/catalogo/taz",
+		},
+		{
+			name:    "unrelated token is untouched",
+			token:   "is:open",
+			aliases: aliases,
+			want:    "is:open",
+		},
+		{
+			name:    "nil aliases leaves token unchanged",
+			token:   "project:@catalogo/taz",
+			aliases: nil,
+			want:    "project:@catalogo/taz",
+		},
+		{
+			name:    "empty aliases leaves token unchanged",
+			token:   "project:@catalogo/taz",
+			aliases: map[string]string{},
+			want:    "project:@catalogo/taz",
+		},
+		{
+			name:    "alias with multiple slashes in rest only first slash separates alias from rest",
+			token:   "project:@catalogo/taz/sub",
+			aliases: aliases,
+			want:    "project:luizalabs/canais-digitais/navegacao/catalogo/taz/sub",
+		},
+		{
+			name:  "alias base with trailing slash and remainder does not produce double slash",
+			token: "project:@catalogo/taz",
+			aliases: map[string]string{
+				"catalogo": "luizalabs/canais-digitais/navegacao/catalogo/",
+			},
+			want: "project:luizalabs/canais-digitais/navegacao/catalogo/taz",
+		},
+		{
+			name:  "alias base with trailing slash and no remainder is preserved as configured",
+			token: "project:@catalogo",
+			aliases: map[string]string{
+				"catalogo": "luizalabs/canais-digitais/navegacao/catalogo/",
+			},
+			want: "project:luizalabs/canais-digitais/navegacao/catalogo/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, expandProjectAliasToken(tt.token, tt.aliases))
+		})
+	}
+}
+
+func TestExpandProjectAliases(t *testing.T) {
+	aliases := map[string]string{
+		"catalogo": "luizalabs/canais-digitais/navegacao/catalogo",
+	}
+
+	tests := []struct {
+		name    string
+		query   string
+		aliases map[string]string
+		want    string
+	}{
+		{
+			name:    "single project alias token expands",
+			query:   "project:@catalogo/taz",
+			aliases: aliases,
+			want:    "project:luizalabs/canais-digitais/navegacao/catalogo/taz",
+		},
+		{
+			name:    "single repo alias token expands and keeps repo prefix",
+			query:   "repo:@catalogo/taz",
+			aliases: aliases,
+			want:    "repo:luizalabs/canais-digitais/navegacao/catalogo/taz",
+		},
+		{
+			name:    "query without alias tokens is unchanged",
+			query:   "is:open author:@me",
+			aliases: aliases,
+			want:    "is:open author:@me",
+		},
+		{
+			name:    "multiple tokens only matching alias token expands",
+			query:   "is:open project:@catalogo/taz author:@me",
+			aliases: aliases,
+			want:    "is:open project:luizalabs/canais-digitais/navegacao/catalogo/taz author:@me",
+		},
+		{
+			name:    "unconfigured alias token passes through verbatim within a larger query",
+			query:   "is:open project:@inexistente author:@me",
+			aliases: aliases,
+			want:    "is:open project:@inexistente author:@me",
+		},
+		{
+			name:    "nil aliases leaves query unchanged even with matching token",
+			query:   "project:@catalogo/taz",
+			aliases: nil,
+			want:    "project:@catalogo/taz",
+		},
+		{
+			name:    "empty aliases leaves query unchanged even with matching token",
+			query:   "project:@catalogo/taz",
+			aliases: map[string]string{},
+			want:    "project:@catalogo/taz",
+		},
+		{
+			name:    "empty query stays empty",
+			query:   "",
+			aliases: aliases,
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, expandProjectAliases(tt.query, tt.aliases))
+		})
+	}
+}
+
+func TestBaseModelProjectAliases(t *testing.T) {
+	t.Run("nil ctx returns nil without panicking", func(t *testing.T) {
+		m := BaseModel{}
+		require.NotPanics(t, func() {
+			require.Nil(t, m.projectAliases())
+		})
+	})
+
+	t.Run("nil config returns nil without panicking", func(t *testing.T) {
+		m := BaseModel{Ctx: &context.ProgramContext{}}
+		require.NotPanics(t, func() {
+			require.Nil(t, m.projectAliases())
+		})
+	})
+
+	t.Run("returns configured aliases", func(t *testing.T) {
+		aliases := map[string]string{
+			"catalogo": "luizalabs/canais-digitais/navegacao/catalogo",
+		}
+		m := BaseModel{Ctx: &context.ProgramContext{
+			Config: &config.Config{ProjectAliases: aliases},
+		}}
+		require.Equal(t, aliases, m.projectAliases())
+	})
+}
+
+func TestGetSearchValue_NilConfigDoesNotPanic(t *testing.T) {
+	repo := git.RemoteRepo{Owner: "dlvhdr", Name: "gh-dash"}
+	m := BaseModel{
+		SearchValue: "project:@catalogo/taz is:open",
+	}
+	m.Ctx = &context.ProgramContext{
+		GHRepo: &repo,
+	}
+
+	var got string
+	require.NotPanics(t, func() {
+		got = m.GetSearchValue()
+	})
+	require.Equal(t, "project:@catalogo/taz is:open", got)
+}
+
+func TestGetSearchValue_ExpandsProjectAlias(t *testing.T) {
+	repo := git.RemoteRepo{Owner: "dlvhdr", Name: "gh-dash"}
+	m := BaseModel{
+		SearchValue: "project:@catalogo/taz is:open",
+	}
+	m.Ctx = &context.ProgramContext{
+		GHRepo: &repo,
+		Config: &config.Config{
+			ProjectAliases: map[string]string{
+				"catalogo": "luizalabs/canais-digitais/navegacao/catalogo",
+			},
+		},
+	}
+
+	got := m.GetSearchValue()
+
+	require.Contains(t, got, "project:luizalabs/canais-digitais/navegacao/catalogo/taz")
+	require.Contains(t, got, "is:open")
+}
+
 func TestViewRendersAtMainContentWidth(t *testing.T) {
 	cfg, err := config.ParseConfig(config.Location{
 		ConfigFlag:       "../../../config/testdata/test-config.yml",

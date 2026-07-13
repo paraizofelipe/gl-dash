@@ -75,6 +75,7 @@ export default defineConfig({
             "configuration/issue-section",
             "configuration/notification-section",
             "configuration/repo-paths",
+            "configuration/project-aliases",
             "configuration/keybindings",
             "configuration/theme",
             "configuration/reusing",
