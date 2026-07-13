@@ -403,6 +403,30 @@ func newCountingMockRESTClient(t *testing.T) (*gitlabapi.Client, *int) {
 	return client, callCount
 }
 
+func TestIsOpenableURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{"https url", "https://gitlab.com/group/proj/-/merge_requests/1", true},
+		{"http url", "http://gitlab.com/group/proj", true},
+		{"ftp scheme is rejected", "ftp://example.com/file", false},
+		{"file scheme is rejected", "file:///etc/passwd", false},
+		{"javascript scheme is rejected", "javascript:alert(1)", false},
+		{"missing scheme is rejected", "gitlab.com/group/proj", false},
+		{"empty string is rejected", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isOpenableURL(tt.url); got != tt.want {
+				t.Errorf("isOpenableURL(%q) = %v, want %v", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestOpenInBrowser_UnopenableURLDoesNotOpenOrMarkAsRead(t *testing.T) {
 	tests := []struct {
 		name    string

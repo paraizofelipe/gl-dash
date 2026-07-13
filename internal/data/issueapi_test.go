@@ -14,6 +14,23 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/gitlab"
 )
 
+func TestIssueNodeNormalizesState(t *testing.T) {
+	// GitLab returns issue states lowercase (opened/closed/locked); the TUI
+	// renders the GitHub-style uppercase OPEN/CLOSED, so the adapter must
+	// normalize or the issue status glyph never shows.
+	cases := map[string]string{
+		"opened": "OPEN",
+		"closed": "CLOSED",
+		"locked": "OPEN",
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			n := issueNode{State: in}
+			assert.Equal(t, want, n.toIssueData("").State)
+		})
+	}
+}
+
 func TestFetchIssues(t *testing.T) {
 	t.Run("project scoped query maps issue fields to IssueData", func(t *testing.T) {
 		defer SetClient(nil)
@@ -41,7 +58,7 @@ func TestFetchIssues(t *testing.T) {
 		assert.Equal(t, 7, issue.Number)
 		assert.Equal(t, "Something broken", issue.Title)
 		assert.Equal(t, "desc", issue.Body)
-		assert.Equal(t, "opened", issue.State)
+		assert.Equal(t, "OPEN", issue.State)
 		assert.Equal(t, "jdoe", issue.Author.Login)
 		assert.Equal(t, "https://gitlab.com/group/proj/-/issues/7", issue.Url)
 		assert.Equal(t, wantCreatedAt, issue.CreatedAt)
@@ -88,7 +105,7 @@ func TestFetchIssues(t *testing.T) {
 			issue := resp.Issues[0]
 			assert.Equal(t, 9, issue.Number)
 			assert.Equal(t, "My issue", issue.Title)
-			assert.Equal(t, "closed", issue.State)
+			assert.Equal(t, "CLOSED", issue.State)
 			assert.Equal(t, "", issue.Repository.Owner.Login)
 			assert.Equal(t, "", issue.Repository.Name)
 			assert.Equal(t, "", issue.Repository.NameWithOwner)
@@ -661,7 +678,7 @@ func TestFetchIssue(t *testing.T) {
 		assert.Equal(t, 7, issue.Number)
 		assert.Equal(t, "Something broken", issue.Title)
 		assert.Equal(t, "desc", issue.Body)
-		assert.Equal(t, "opened", issue.State)
+		assert.Equal(t, "OPEN", issue.State)
 		assert.Equal(t, "jdoe", issue.Author.Login)
 		assert.Equal(t, wantCreatedAt, issue.CreatedAt)
 		assert.Equal(t, wantUpdatedAt, issue.UpdatedAt)

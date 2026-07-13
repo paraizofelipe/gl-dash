@@ -250,7 +250,10 @@ func isOpenableURL(rawUrl string) bool {
 	if err != nil {
 		return false
 	}
-	return u.Scheme != "" && u.Host != ""
+	// Only hand http/https URLs to the browser opener; other schemes
+	// (file://, javascript:, ftp://, custom app handlers) should never be
+	// auto-launched from a notification. url.Parse lowercases the scheme.
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // openInBrowser marks the current notification as read and opens it in the browser

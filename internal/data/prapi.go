@@ -623,20 +623,30 @@ func commentsAndReviewThreadsFromDiscussions(
 	}
 
 	for _, discussion := range discussions {
-		var lineComments []ReviewComment
+		// Group thread-vs-comment per discussion, not per note: in GitLab
+		// only the first note of a diff discussion carries a position;
+		// replies come with position: null. Detecting the position on any
+		// non-system note marks the whole discussion as a review thread so
+		// its replies stay attached instead of fragmenting into top-level
+		// comments. System notes never make a discussion a review thread.
 		var path string
 		var line int
 		hasPosition := false
+		for _, note := range discussion.Notes.Nodes {
+			if note.System || note.Position == nil {
+				continue
+			}
+			path, line = diffPositionLineAndPath(note.Position)
+			hasPosition = true
+			break
+		}
 
+		var lineComments []ReviewComment
 		for _, note := range discussion.Notes.Nodes {
 			if note.System {
 				continue
 			}
-			if note.Position != nil {
-				if !hasPosition {
-					path, line = diffPositionLineAndPath(note.Position)
-					hasPosition = true
-				}
+			if hasPosition {
 				lineComments = append(lineComments, ReviewComment{
 					Author:    struct{ Login string }{Login: note.Author.Username},
 					Body:      note.Body,
@@ -784,6 +794,25 @@ func reviewDecisionFromApproved(approved bool) string {
 	return "REVIEW_REQUIRED"
 }
 
+// pullRequestStateFromGitLab normalizes GitLab's lowercase merge request state
+// (opened/closed/locked/merged) into the GitHub-style uppercase form
+// (OPEN/CLOSED/MERGED) the TUI was written against — the rendering and
+// optimistic-update code all switch on OPEN/CLOSED/MERGED, so without this the
+// state glyph column falls through to the "-" placeholder. A "locked" MR (merge
+// in progress) is still shown as open.
+func pullRequestStateFromGitLab(state string) string {
+	switch strings.ToLower(state) {
+	case "opened", "locked":
+		return "OPEN"
+	case "closed":
+		return "CLOSED"
+	case "merged":
+		return "MERGED"
+	default:
+		return strings.ToUpper(state)
+	}
+}
+
 func mergeStateStatusFromDetailedStatus(status string) MergeStateStatus {
 	switch status {
 	case "MERGEABLE":
@@ -861,7 +890,7 @@ func (n mergeRequestNode) toPullRequestData(projectPath string) PullRequestData 
 		CreatedAt:        n.CreatedAt,
 		UpdatedAt:        n.UpdatedAt,
 		Url:              n.WebUrl,
-		State:            n.State,
+		State:            pullRequestStateFromGitLab(n.State),
 		IsDraft:          n.Draft,
 		HeadRefName:      n.SourceBranch,
 		BaseRefName:      n.TargetBranch,
@@ -888,7 +917,7 @@ func (n mergeRequestNode) toEnrichedPullRequestData(projectPath string) Enriched
 		CreatedAt:      n.CreatedAt,
 		UpdatedAt:      n.UpdatedAt,
 		Url:            n.WebUrl,
-		State:          n.State,
+		State:          pullRequestStateFromGitLab(n.State),
 		IsDraft:        n.Draft,
 		HeadRefName:    n.SourceBranch,
 		BaseRefName:    n.TargetBranch,

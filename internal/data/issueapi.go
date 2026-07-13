@@ -116,13 +116,28 @@ type issueNode struct {
 	} `graphql:"assignees(first: 3)"`
 }
 
+// issueStateFromGitLab normalizes GitLab's lowercase issue state
+// (opened/closed/locked) into the GitHub-style uppercase form (OPEN/CLOSED) the
+// TUI renders — without it the issue status glyph never matches. A "locked"
+// issue (comments locked) is still shown as open.
+func issueStateFromGitLab(state string) string {
+	switch strings.ToLower(state) {
+	case "opened", "locked":
+		return "OPEN"
+	case "closed":
+		return "CLOSED"
+	default:
+		return strings.ToUpper(state)
+	}
+}
+
 func (n issueNode) toIssueData(projectPath string) IssueData {
 	number, _ := strconv.Atoi(n.Iid)
 	return IssueData{
 		Number:     number,
 		Title:      n.Title,
 		Body:       n.Description,
-		State:      n.State,
+		State:      issueStateFromGitLab(n.State),
 		Author:     struct{ Login string }{Login: n.Author.Username},
 		CreatedAt:  n.CreatedAt,
 		UpdatedAt:  n.UpdatedAt,
@@ -331,6 +346,10 @@ func FetchIssue(issueUrl string) (IssueData, error) {
 	issue := queryResult.Project.Issue
 	issueData := issue.toIssueData(fullPath)
 	issueData.Comments = commentsFromDiscussions(issue.Discussions.Nodes)
+	// Approximation: GitHub's reactionGroups counts every emoji reaction, but
+	// GitLab's Issue GraphQL type only exposes upvotes (👍) and downvotes (👎),
+	// not the full award-emoji tally. We surface their sum as the reaction
+	// count, so other emoji reactions (🎉, ❤️, 👀, …) are not reflected here.
 	issueData.Reactions = IssueReactions{TotalCount: issue.Upvotes + issue.Downvotes}
 	return issueData, nil
 }

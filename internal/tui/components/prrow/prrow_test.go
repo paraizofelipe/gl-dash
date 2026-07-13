@@ -110,6 +110,50 @@ func TestGetStatusChecksRollup(t *testing.T) {
 	}
 }
 
+func TestRenderState(t *testing.T) {
+	cfg, err := config.ParseConfig(config.Location{
+		ConfigFlag:       "../../../config/testdata/test-config.yml",
+		SkipGlobalConfig: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thm := theme.ParseTheme(&cfg)
+	ctx := &context.ProgramContext{
+		Config: &cfg,
+		Theme:  thm,
+		Styles: context.InitStyles(thm),
+	}
+
+	newPR := func(primary *data.PullRequestData) *PullRequest {
+		return &PullRequest{Ctx: ctx, Data: &Data{Primary: primary}}
+	}
+
+	tests := []struct {
+		name         string
+		pr           *PullRequest
+		wantContains string
+	}{
+		// The adapter normalizes GitLab's lowercase state to these uppercase
+		// values; renderState must map each to its glyph instead of the "-"
+		// placeholder that the pre-fix lowercase state fell through to.
+		{"open state renders open icon", newPR(&data.PullRequestData{State: "OPEN"}), constants.OpenIcon},
+		{"closed state renders closed icon", newPR(&data.PullRequestData{State: "CLOSED"}), constants.ClosedIcon},
+		{"merged state renders merged icon", newPR(&data.PullRequestData{State: "MERGED"}), constants.MergedIcon},
+		{"draft open state renders draft icon", newPR(&data.PullRequestData{State: "OPEN", IsDraft: true}), constants.DraftIcon},
+		{"unknown state renders placeholder dash", newPR(&data.PullRequestData{State: "opened"}), "-"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.pr.renderState()
+			if !strings.Contains(result, tt.wantContains) {
+				t.Errorf("renderState() = %q, want substring %q", result, tt.wantContains)
+			}
+		})
+	}
+}
+
 func TestRenderCiStatus(t *testing.T) {
 	cfg, err := config.ParseConfig(config.Location{
 		ConfigFlag:       "../../../config/testdata/test-config.yml",

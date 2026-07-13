@@ -100,6 +100,19 @@ func renderEmptyState() string {
 	return lipgloss.NewStyle().Italic(true).Render("No comments...")
 }
 
+// deletedUserLabel is shown in the Activity tab when a note/review author is
+// empty. GitLab reassigns content from deleted accounts to a "Ghost User", but
+// payloads can still surface a blank username, which would otherwise render as
+// a nameless comment.
+const deletedUserLabel = "ghost"
+
+func authorLabel(login string) string {
+	if login == "" {
+		return deletedUserLabel
+	}
+	return login
+}
+
 type comment struct {
 	Author    string
 	UpdatedAt time.Time
@@ -119,7 +132,7 @@ func (m *Model) renderComment(
 		BorderForeground(m.ctx.Theme.FaintBorder).Render(
 		lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			m.ctx.Styles.Common.MainTextStyle.Render(comment.Author),
+			m.ctx.Styles.Common.MainTextStyle.Render(authorLabel(comment.Author)),
 			" ",
 			lipgloss.NewStyle().
 				Foreground(m.ctx.Theme.FaintText).
@@ -164,14 +177,22 @@ func (m *Model) renderReview(
 }
 
 func (m *Model) renderReviewHeader(review data.Review) string {
-	return lipgloss.JoinHorizontal(lipgloss.Top,
+	segments := []string{
 		m.renderReviewDecision(review.State),
 		" ",
-		m.ctx.Styles.Common.MainTextStyle.Render(review.Author.Login),
-		" ",
-		lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(
-			"reviewed "+utils.TimeElapsed(review.UpdatedAt)),
-	)
+		m.ctx.Styles.Common.MainTextStyle.Render(authorLabel(review.Author.Login)),
+	}
+	// approvedBy-derived reviews carry no timestamp (GitLab's approvedBy has
+	// no "reviewed at" field), leaving UpdatedAt zero. Rendering it would
+	// print a bogus "reviewed 292y" — suppress the line entirely instead.
+	if !review.UpdatedAt.IsZero() {
+		segments = append(segments,
+			" ",
+			lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(
+				"reviewed "+utils.TimeElapsed(review.UpdatedAt)),
+		)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, segments...)
 }
 
 func (m *Model) renderReviewDecision(decision string) string {

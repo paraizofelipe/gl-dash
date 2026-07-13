@@ -170,7 +170,7 @@ func TestFetchPullRequests(t *testing.T) {
 		assert.Equal(t, "Fix bug", pr.Title)
 		assert.Equal(t, "jdoe", pr.Author.Login)
 		assert.Equal(t, "", pr.AuthorAssociation)
-		assert.Equal(t, "opened", pr.State)
+		assert.Equal(t, "OPEN", pr.State)
 		assert.False(t, pr.IsDraft)
 		assert.Equal(t, "https://gitlab.com/group/proj/-/merge_requests/42", pr.Url)
 		assert.Equal(t, "feature-x", pr.HeadRefName)
@@ -1382,7 +1382,7 @@ func TestFetchPullRequest(t *testing.T) {
 
 		assert.Equal(t, 42, pr.Number)
 		assert.Equal(t, "Fix bug", pr.Title)
-		assert.Equal(t, "opened", pr.State)
+		assert.Equal(t, "OPEN", pr.State)
 		assert.False(t, pr.IsDraft)
 		assert.Equal(t, "jdoe", pr.Author.Login)
 		assert.Equal(t, wantCreatedAt, pr.CreatedAt)
@@ -2325,6 +2325,25 @@ func TestDiffPositionLineAndPath(t *testing.T) {
 	})
 }
 
+func TestMergeRequestNodeNormalizesState(t *testing.T) {
+	// GitLab returns merge request states lowercase (opened/closed/merged/
+	// locked); the TUI renders the GitHub-style uppercase OPEN/CLOSED/MERGED,
+	// so the adapter must normalize or the state glyph column shows "-".
+	cases := map[string]string{
+		"opened": "OPEN",
+		"closed": "CLOSED",
+		"merged": "MERGED",
+		"locked": "OPEN",
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			n := mergeRequestNode{State: in}
+			assert.Equal(t, want, n.toPullRequestData("").State)
+			assert.Equal(t, want, n.toEnrichedPullRequestData("").State)
+		})
+	}
+}
+
 func TestCommentsAndReviewThreadsFromDiscussions(t *testing.T) {
 	updatedAt := time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC)
 
@@ -2400,6 +2419,46 @@ func TestCommentsAndReviewThreadsFromDiscussions(t *testing.T) {
 		assert.Equal(t, 9, threads.Nodes[0].Line)
 		assert.Equal(t, 9, threads.Nodes[0].OriginalLine)
 		assert.Equal(t, 9, threads.Nodes[0].StartLine)
+	})
+
+	t.Run("reply without position stays in the same review thread", func(t *testing.T) {
+		// In GitLab only the first note of a diff discussion carries a
+		// position; replies arrive with position: null. They must stay in the
+		// same review thread instead of becoming top-level comments.
+		discussions := []gitlabDiscussionNode{
+			discussionWithNotes(
+				gitlabNoteNode{
+					Author:    usernameAuthor("bob"),
+					Body:      "fix this",
+					UpdatedAt: updatedAt,
+					System:    false,
+					Position: &gitlabNotePositionNode{
+						FilePath: "main.go",
+						NewLine:  10,
+					},
+				},
+				gitlabNoteNode{
+					Author:    usernameAuthor("alice"),
+					Body:      "done",
+					UpdatedAt: updatedAt,
+					System:    false,
+				},
+			),
+		}
+
+		comments, threads := commentsAndReviewThreadsFromDiscussions(discussions)
+
+		assert.Empty(t, comments.Nodes)
+		require.Len(t, threads.Nodes, 1)
+		thread := threads.Nodes[0]
+		assert.Equal(t, "main.go", thread.Path)
+		assert.Equal(t, 10, thread.Line)
+		require.Len(t, thread.Comments.Nodes, 2)
+		assert.Equal(t, "bob", thread.Comments.Nodes[0].Author.Login)
+		assert.Equal(t, "fix this", thread.Comments.Nodes[0].Body)
+		assert.Equal(t, "alice", thread.Comments.Nodes[1].Author.Login)
+		assert.Equal(t, "done", thread.Comments.Nodes[1].Body)
+		assert.Equal(t, 10, thread.Comments.Nodes[1].Line)
 	})
 
 	t.Run("filters system notes from both comments and review threads", func(t *testing.T) {
