@@ -28,6 +28,11 @@ keybindings:
         tmux new-window -c {{.RepoPath}} '
         nvim -c ":silent Octo pr edit {{.PrNumber}}"
         '
+  prs:
+    - key: H
+      name: herdr AI review
+      command: >
+        ~/code/personal/gl-dash/scripts/herdr-mr-review.sh {{.RepoPath}} {{.PrNumber}}
 repoPaths:
   dlvhdr/*: ~/code/personal/*
 pager:

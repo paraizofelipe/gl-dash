@@ -131,6 +131,31 @@ The following built-in PR commands can be overridden with custom keybinds:
 
 See [PR keys](../../getting-started/keybindings/selected-pr/) for more details.
 
+### herdr AI Code Review
+
+You can add this custom keybinding to your `config.yml` to trigger an AI-assisted code review for the selected PR/MR through `herdr`, a terminal multiplexer, and Claude Code — without leaving the dashboard. This is entirely opt-in: `dash` does not enable it by default.
+
+```yaml
+keybindings:
+  prs:
+    - key: H
+      name: herdr AI review
+      command: >
+        ~/code/personal/gl-dash/scripts/herdr-mr-review.sh {{.RepoPath}} {{.PrNumber}}
+```
+
+This requires `herdr`, `jq` and `claude` to be available on your `PATH`.
+
+**Hard prerequisite: `repoPaths`.** `{{.RepoPath}}` is resolved from the `repoPaths` mapping in `config.yml` (see [Available Command Arguments](#available-command-arguments) above). If the selected repo isn't mapped there, `{{.RepoPath}}` falls back to the current working directory and the review session can open in the wrong repo — map every repo you plan to review under `repoPaths` before using this keybinding.
+
+The script behind the keybinding, `scripts/herdr-mr-review.sh`, is idempotent: it reuses or creates a `code-review` herdr workspace and a `MR-<PrNumber>` tab, then runs `claude "/mr-review <PrNumber>" --dangerously-skip-permissions` in that tab. Pressing `H` again for the same PR just focuses the existing tab instead of starting a new session.
+
+**Security note.** `--dangerously-skip-permissions` runs that Claude Code session without any tool-permission prompts — file edits, git operations, and shell commands the `/mr-review` skill decides to run will execute unattended in your local clone. Because the session's context includes the MR's title, description, diff and comments — content authored by whoever opened the MR — a maliciously crafted MR could attempt to manipulate the AI session into unintended actions, and nothing will interrupt it to ask for confirmation. Only bind this key if you trust the source of the MRs you review this way, and understand what `/mr-review` is allowed to do before enabling it.
+
+If the tab opens but `claude` never starts (rare — happens when the shell inside the pane is still initializing and the type-ahead command gets lost), the script doesn't detect it: pressing `H` again will just focus the empty tab instead of retrying. Close that tab manually and press `H` once more to get a fresh one.
+
+Use an absolute path (or a `~/...` path, as in the example) in `command:` — the template does not resolve paths relative to the repo being reviewed.
+
 ## Issue Keybindings
 
 Define any number of keybindings for the issues view or override existing ones.
