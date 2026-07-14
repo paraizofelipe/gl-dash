@@ -11,6 +11,7 @@ theme:
       faint: "245"
       warning: "003"
       success: "002"
+      author: "077"
     background:
       selected: "008"
     border:

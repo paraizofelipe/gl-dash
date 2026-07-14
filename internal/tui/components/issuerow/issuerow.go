@@ -78,7 +78,9 @@ func (issue *Issue) renderTitle() string {
 }
 
 func (issue *Issue) renderOpenedBy() string {
-	return issue.getTextStyle().Render(issue.Data.GetAuthor(issue.Ctx.Theme, issue.ShowAuthorIcon))
+	return issue.getTextStyle().
+		Foreground(issue.Ctx.Theme.AuthorText).
+		Render(issue.Data.GetAuthor(issue.Ctx.Theme, issue.ShowAuthorIcon))
 }
 
 func (issue *Issue) renderAssignees() string {

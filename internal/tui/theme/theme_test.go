@@ -64,4 +64,72 @@ func TestTheme(t *testing.T) {
 		require.Equal(t, ansi.BasicColor(12), parsed.PrimaryText.Light)
 		require.Equal(t, ansi.BasicColor(12), parsed.PrimaryText.Dark)
 	})
+
+	t.Run("Should fallback to the default author color when not configured", func(t *testing.T) {
+		colors := config.ColorThemeConfig{
+			Inline: config.ColorTheme{
+				Text: config.ColorThemeText{
+					Author: "",
+				},
+			},
+		}
+		thm := config.ThemeConfig{
+			Colors: &colors,
+		}
+		cfg := config.Config{
+			Theme: &thm,
+		}
+
+		parsed := ParseTheme(&cfg)
+		require.Equal(t, ansi.IndexedColor(75), parsed.AuthorText.Light)
+		require.Equal(t, ansi.IndexedColor(75), parsed.AuthorText.Dark)
+	})
+
+	t.Run("Should use the configured author color", func(t *testing.T) {
+		colors := config.ColorThemeConfig{
+			Inline: config.ColorTheme{
+				Text: config.ColorThemeText{
+					Author: "#00FF00",
+				},
+			},
+		}
+		thm := config.ThemeConfig{
+			Colors: &colors,
+		}
+		cfg := config.Config{
+			Theme: &thm,
+		}
+
+		parsed := ParseTheme(&cfg)
+		require.Equal(
+			t,
+			color.RGBA{R: 0x0, G: 0xff, B: 0x0, A: 0xff},
+			parsed.AuthorText.Light,
+		)
+		require.Equal(
+			t,
+			color.RGBA{R: 0x0, G: 0xff, B: 0x0, A: 0xff},
+			parsed.AuthorText.Dark,
+		)
+	})
+
+	t.Run("Should use ANSI color indices for the author color", func(t *testing.T) {
+		colors := config.ColorThemeConfig{
+			Inline: config.ColorTheme{
+				Text: config.ColorThemeText{
+					Author: "12",
+				},
+			},
+		}
+		thm := config.ThemeConfig{
+			Colors: &colors,
+		}
+		cfg := config.Config{
+			Theme: &thm,
+		}
+
+		parsed := ParseTheme(&cfg)
+		require.Equal(t, ansi.BasicColor(12), parsed.AuthorText.Light)
+		require.Equal(t, ansi.BasicColor(12), parsed.AuthorText.Dark)
+	})
 }

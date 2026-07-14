@@ -197,6 +197,7 @@ func TestParser(t *testing.T) {
 		require.Equal(t, Color("12"), parsed.Theme.Colors.Inline.Text.Primary)
 		require.Equal(t, Color("013"), parsed.Theme.Colors.Inline.Border.Primary)
 		require.Equal(t, Color("008"), parsed.Theme.Colors.Inline.Background.Selected)
+		require.Equal(t, Color("077"), parsed.Theme.Colors.Inline.Text.Author)
 	})
 }
 

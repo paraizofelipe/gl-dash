@@ -14,6 +14,7 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/theme"
+	"github.com/dlvhdr/gh-dash/v4/internal/utils"
 )
 
 func newLastCommitStatus(state string) data.LastCommitStatus {
@@ -406,6 +407,144 @@ func TestRenderLabels(t *testing.T) {
 				if !strings.Contains(result, want) {
 					t.Errorf("renderLabels() = %q, want substring %q", result, want)
 				}
+			}
+		})
+	}
+}
+
+func TestRenderAuthor(t *testing.T) {
+	authorText := compat.AdaptiveColor{
+		Light: lipgloss.Color("#00FF00"),
+		Dark:  lipgloss.Color("#00FF00"),
+	}
+	primaryText := compat.AdaptiveColor{
+		Light: lipgloss.Color("#000000"),
+		Dark:  lipgloss.Color("#FFFFFF"),
+	}
+
+	ctx := &context.ProgramContext{
+		Theme: theme.Theme{
+			PrimaryText: primaryText,
+			AuthorText:  authorText,
+		},
+	}
+
+	pr := &PullRequest{
+		Ctx: ctx,
+		Data: &Data{
+			Primary: &data.PullRequestData{
+				Author: struct {
+					Login string
+				}{Login: "octocat"},
+			},
+		},
+	}
+
+	result := pr.renderAuthor()
+
+	wantAuthorRun := lipgloss.NewStyle().Foreground(authorText).Render("octocat")
+	wantPrimaryRun := lipgloss.NewStyle().Foreground(primaryText).Render("octocat")
+
+	if result != wantAuthorRun {
+		t.Errorf("renderAuthor() = %q, want %q (styled with Theme.AuthorText)", result, wantAuthorRun)
+	}
+
+	if result == wantPrimaryRun {
+		t.Errorf("renderAuthor() = %q, should not be styled with Theme.PrimaryText", result)
+	}
+}
+
+func TestRenderExtendedTitleAuthorColor(t *testing.T) {
+	authorText := compat.AdaptiveColor{
+		Light: lipgloss.Color("#00FF00"),
+		Dark:  lipgloss.Color("#00FF00"),
+	}
+	secondaryText := compat.AdaptiveColor{
+		Light: lipgloss.Color("#111111"),
+		Dark:  lipgloss.Color("#EEEEEE"),
+	}
+	selectedBackground := compat.AdaptiveColor{
+		Light: lipgloss.Color("#222222"),
+		Dark:  lipgloss.Color("#DDDDDD"),
+	}
+	primaryText := compat.AdaptiveColor{
+		Light: lipgloss.Color("#000000"),
+		Dark:  lipgloss.Color("#FFFFFF"),
+	}
+
+	ctx := &context.ProgramContext{
+		Config: &config.Config{
+			Defaults: config.Defaults{
+				Layout: config.LayoutConfig{
+					Prs: config.PrsLayoutConfig{
+						Base: config.ColumnConfig{Hidden: utils.BoolPtr(true)},
+					},
+				},
+			},
+		},
+		Theme: theme.Theme{
+			PrimaryText:        primaryText,
+			SecondaryText:      secondaryText,
+			SelectedBackground: selectedBackground,
+			AuthorText:         authorText,
+		},
+	}
+
+	newPR := func() *PullRequest {
+		return &PullRequest{
+			Ctx: ctx,
+			Data: &Data{
+				Primary: &data.PullRequestData{
+					Number: 42,
+					Title:  "Add author color",
+					Author: struct {
+						Login string
+					}{Login: "octocat"},
+					Repository: data.Repository{NameWithOwner: "org/repo"},
+				},
+			},
+			Columns: []table.Column{
+				{Title: "Title", Grow: utils.BoolPtr(true), ComputedWidth: 60},
+			},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		isSelected bool
+	}{
+		{"not selected", false},
+		{"selected", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pr := newPR()
+			result := pr.renderExtendedTitle(tt.isSelected)
+
+			baseStyle := lipgloss.NewStyle()
+			if tt.isSelected {
+				baseStyle = baseStyle.Foreground(secondaryText).Background(selectedBackground)
+			}
+			wantAuthorRun := baseStyle.Bold(true).Foreground(authorText).Render("@octocat")
+			oldAuthorRun := baseStyle.Bold(true).Render("@octocat")
+
+			if !strings.Contains(result, wantAuthorRun) {
+				t.Errorf(
+					"renderExtendedTitle(%v) = %q, want it to contain the AuthorText-styled author run %q",
+					tt.isSelected,
+					result,
+					wantAuthorRun,
+				)
+			}
+
+			if strings.Contains(result, oldAuthorRun) {
+				t.Errorf(
+					"renderExtendedTitle(%v) = %q, should not render the author without Theme.AuthorText styling (found %q)",
+					tt.isSelected,
+					result,
+					oldAuthorRun,
+				)
 			}
 		})
 	}
