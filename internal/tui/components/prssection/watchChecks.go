@@ -24,6 +24,7 @@ const (
 	watchOutcomeFailure
 	watchOutcomeNeutral
 	watchOutcomeError
+	watchOutcomeManual
 )
 
 func decideWatchOutcome(pipeline data.MergeRequestPipeline, err error) watchOutcome {
@@ -31,7 +32,12 @@ func decideWatchOutcome(pipeline data.MergeRequestPipeline, err error) watchOutc
 		return watchOutcomeError
 	}
 	status := string(pipeline.Status)
-	if pipeline.ID == 0 || data.IsPending(status) || data.IsManual(status) {
+	// A manual pipeline is blocked awaiting a manual action and won't progress on
+	// its own, so treat it as terminal instead of polling forever in silence.
+	if data.IsManual(status) {
+		return watchOutcomeManual
+	}
+	if pipeline.ID == 0 || data.IsPending(status) {
 		return watchOutcomeReschedule
 	}
 	if data.IsFailure(status) {
@@ -152,6 +158,9 @@ func (m *Model) onWatchPipelineResultMsg(msg watchPipelineResultMsg) tea.Cmd {
 		)
 	case watchOutcomeError:
 		return finishWatchChecks(msg.taskId, msg.sectionId, msg.prNumber, msg.err)
+	case watchOutcomeManual:
+		notifyWatchChecksResult(msg, "⏸️ Pipeline is waiting for a manual action")
+		return finishWatchChecks(msg.taskId, msg.sectionId, msg.prNumber, nil)
 	case watchOutcomeFailure:
 		notifyWatchChecksResult(msg, "❌ Checks have failed")
 		return finishWatchChecks(msg.taskId, msg.sectionId, msg.prNumber, nil)

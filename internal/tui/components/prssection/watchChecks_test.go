@@ -144,10 +144,10 @@ func TestDecideWatchOutcome(t *testing.T) {
 			want:     watchOutcomeReschedule,
 		},
 		{
-			name:     "manual pipeline status is rescheduled since the overall pipeline run has not finished",
+			name:     "manual pipeline status is terminal since it is blocked awaiting a manual action and won't progress on its own",
 			pipeline: data.MergeRequestPipeline{ID: 5, Status: data.StatusManual},
 			err:      nil,
-			want:     watchOutcomeReschedule,
+			want:     watchOutcomeManual,
 		},
 		{
 			name:     "failed pipeline status is reported as a failure",
@@ -443,6 +443,30 @@ func TestOnWatchPipelineResultMsg_TerminalNeutral(t *testing.T) {
 		t,
 		finished.Err,
 		"a canceled pipeline must not surface as an error on the watch task itself",
+	)
+
+	updateMsg, ok := finished.Msg.(tasks.UpdatePRMsg)
+	require.True(t, ok, "expected tasks.UpdatePRMsg, got %T", finished.Msg)
+	require.Equal(t, 42, updateMsg.PrNumber)
+}
+
+func TestOnWatchPipelineResultMsg_TerminalManual(t *testing.T) {
+	m := newWatchChecksTestModel(func(task context.Task) tea.Cmd { return nil })
+
+	cmd := m.onWatchPipelineResultMsg(watchPipelineResultMsg{
+		sectionId:         m.Id,
+		taskId:            "pr_watch_checks_42",
+		repoNameWithOwner: "group/proj",
+		prNumber:          42,
+		prTitle:           "Add feature X",
+		pipeline:          data.MergeRequestPipeline{ID: 5, Status: data.StatusManual},
+	})
+
+	finished := extractTaskFinishedMsg(t, cmd)
+	require.NoError(
+		t,
+		finished.Err,
+		"a manual pipeline must terminate the watch (not reschedule) and must not surface an error",
 	)
 
 	updateMsg, ok := finished.Msg.(tasks.UpdatePRMsg)
