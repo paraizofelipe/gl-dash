@@ -1932,6 +1932,49 @@ func TestListPipelineJobs(t *testing.T) {
 		}, jobs[1])
 	})
 
+	t.Run("follows pagination and aggregates jobs from every page", func(t *testing.T) {
+		defer SetRESTClient(nil)
+
+		mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+			page := r.URL.Query().Get("page")
+			w.Header().Set("Content-Type", "application/json")
+			switch page {
+			case "", "1":
+				// First page: only skipped jobs, and there is a next page.
+				w.Header().Set("X-Next-Page", "2")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[
+					{"id":1,"name":"a","stage":"s","status":"skipped"},
+					{"id":2,"name":"b","stage":"s","status":"skipped"}
+				]`))
+			case "2":
+				// Last page: the failing job lives here (no X-Next-Page header).
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[
+					{"id":3,"name":"c","stage":"s","status":"failed"}
+				]`))
+			default:
+				t.Fatalf("unexpected page requested: %q", page)
+			}
+		})
+		SetRESTClient(mockClient)
+
+		jobs, err := ListPipelineJobs("group/proj", 55, "")
+		require.NoError(t, err)
+		require.Len(t, jobs, 3, "must aggregate jobs across all pages, not just the first")
+
+		statuses := make([]PipelineStatus, 0, len(jobs))
+		for _, j := range jobs {
+			statuses = append(statuses, j.Status)
+		}
+		assert.Contains(
+			t,
+			statuses,
+			StatusFailed,
+			"the failing job on a later page must not be dropped",
+		)
+	})
+
 	t.Run("sends no scope query parameter when scope is empty", func(t *testing.T) {
 		defer SetRESTClient(nil)
 

@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/keys"
 )
 
@@ -374,6 +375,7 @@ const (
 	CheckWaiting CheckCategory = iota
 	CheckFailure
 	CheckSuccess
+	CheckNeutral
 )
 
 func (m *Model) renderJobConclusion(job data.PipelineJob) (CheckCategory, string) {
@@ -384,6 +386,15 @@ func (m *Model) renderJobConclusion(job data.PipelineJob) (CheckCategory, string
 
 	if data.IsFailure(status) {
 		return CheckFailure, m.ctx.Styles.Common.FailureGlyph
+	}
+
+	// Skipped/canceled jobs did not run to success, so they must not be shown
+	// with the green success glyph — render them with a faint neutral marker.
+	if data.IsSkipped(status) || data.IsNeutral(status) {
+		neutralGlyph := lipgloss.NewStyle().
+			Foreground(m.ctx.Theme.FaintText).
+			Render(constants.SmallDotIcon)
+		return CheckNeutral, neutralGlyph
 	}
 
 	return CheckSuccess, m.ctx.Styles.Common.SuccessGlyph

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
@@ -94,6 +95,10 @@ func TestRenderJobName(t *testing.T) {
 func TestRenderJobConclusion(t *testing.T) {
 	m := newEnrichedTestModelForChecks(t, nil)
 
+	neutralGlyph := lipgloss.NewStyle().
+		Foreground(m.ctx.Theme.FaintText).
+		Render(constants.SmallDotIcon)
+
 	tests := []struct {
 		name         string
 		status       data.PipelineStatus
@@ -131,16 +136,16 @@ func TestRenderJobConclusion(t *testing.T) {
 			m.ctx.Styles.Common.SuccessGlyph,
 		},
 		{
-			"skipped status falls back to the success bucket",
+			"skipped status is neutral, not success",
 			data.StatusSkipped,
-			CheckSuccess,
-			m.ctx.Styles.Common.SuccessGlyph,
+			CheckNeutral,
+			neutralGlyph,
 		},
 		{
-			"canceled status falls back to the success bucket",
+			"canceled status is neutral, not success",
 			data.StatusCanceled,
-			CheckSuccess,
-			m.ctx.Styles.Common.SuccessGlyph,
+			CheckNeutral,
+			neutralGlyph,
 		},
 	}
 

@@ -544,24 +544,37 @@ func ListPipelineJobs(projectPath string, pipelineID int64, scope string) ([]Pip
 	if err != nil {
 		return nil, err
 	}
-	opts := &gitlabapi.ListJobsOptions{}
+	opts := &gitlabapi.ListJobsOptions{
+		ListOptions: gitlabapi.ListOptions{PerPage: 100},
+	}
 	if scope != "" {
 		opts.Scope = &[]gitlabapi.BuildStateValue{gitlabapi.BuildStateValue(scope)}
 	}
-	jobs, _, err := c.Jobs.ListPipelineJobs(projectPath, pipelineID, opts)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]PipelineJob, 0, len(jobs))
-	for _, j := range jobs {
-		result = append(result, PipelineJob{
-			ID:           j.ID,
-			Name:         j.Name,
-			Stage:        j.Stage,
-			Status:       PipelineStatus(strings.ToLower(j.Status)),
-			WebURL:       j.WebURL,
-			AllowFailure: j.AllowFailure,
-		})
+
+	result := make([]PipelineJob, 0)
+	// A pipeline can have far more jobs than a single page holds (the API
+	// defaults to 20), so follow pagination to the end. Otherwise failing jobs
+	// on later pages are silently dropped and the pipeline looks healthier than
+	// it actually is.
+	for {
+		jobs, resp, err := c.Jobs.ListPipelineJobs(projectPath, pipelineID, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, j := range jobs {
+			result = append(result, PipelineJob{
+				ID:           j.ID,
+				Name:         j.Name,
+				Stage:        j.Stage,
+				Status:       PipelineStatus(strings.ToLower(j.Status)),
+				WebURL:       j.WebURL,
+				AllowFailure: j.AllowFailure,
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	return result, nil
 }
