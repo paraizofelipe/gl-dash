@@ -3,6 +3,7 @@ package prview
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -400,6 +401,17 @@ func (m *Model) renderJobConclusion(job data.PipelineJob) (CheckCategory, string
 	return CheckSuccess, m.ctx.Styles.Common.SuccessGlyph
 }
 
+// jobStatusGlyph returns the status glyph for a job. Manual jobs use the
+// action-required glyph (they are blocked awaiting a manual trigger); every
+// other status defers to renderJobConclusion.
+func (m *Model) jobStatusGlyph(job data.PipelineJob) string {
+	if data.IsManual(string(job.Status)) {
+		return m.ctx.Styles.Common.ActionRequiredGlyph
+	}
+	_, glyph := m.renderJobConclusion(job)
+	return glyph
+}
+
 func (sidebar *Model) renderChecks() string {
 	title := sidebar.ctx.Styles.Common.MainTextStyle.MarginBottom(1).
 		Underline(true).
@@ -426,54 +438,46 @@ func (sidebar *Model) renderChecks() string {
 		)
 	}
 
-	failures := make([]string, 0)
-	waiting := make([]string, 0)
-	rest := make([]string, 0)
-	awaitingApproval := make([]string, 0)
+	// The API returns jobs newest-first (descending id); sort ascending so the
+	// earliest pipeline stages render at the top and the latest at the bottom,
+	// matching the pipeline's execution order. Copy first to avoid mutating the
+	// enriched slice.
+	ordered := make([]data.PipelineJob, len(jobs))
+	copy(ordered, jobs)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].ID < ordered[j].ID
+	})
 
-	for _, job := range jobs {
-		name := renderJobName(job)
-
-		if data.IsManual(string(job.Status)) {
-			check := lipgloss.JoinHorizontal(
-				lipgloss.Top,
-				sidebar.ctx.Styles.Common.ActionRequiredGlyph,
-				" ",
-				name,
-			)
-			awaitingApproval = append(awaitingApproval, check)
-			continue
+	// Group jobs by stage, preserving the order each stage first appears in.
+	stageOrder := make([]string, 0)
+	byStage := make(map[string][]string)
+	for _, job := range ordered {
+		stage := strings.TrimSpace(job.Stage)
+		if _, seen := byStage[stage]; !seen {
+			stageOrder = append(stageOrder, stage)
 		}
-
-		category, renderedStatus := sidebar.renderJobConclusion(job)
-		check := lipgloss.JoinHorizontal(lipgloss.Top, renderedStatus, " ", name)
-
-		switch category {
-		case CheckWaiting:
-			waiting = append(waiting, check)
-		case CheckFailure:
-			failures = append(failures, check)
-		default:
-			rest = append(rest, check)
-		}
+		line := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			sidebar.jobStatusGlyph(job),
+			" ",
+			strings.TrimSpace(job.Name),
+		)
+		byStage[stage] = append(byStage[stage], line)
 	}
 
 	parts := make([]string, 0)
-
-	// Show awaiting approval jobs first
-	if len(awaitingApproval) > 0 {
-		sectionHeader := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(sidebar.ctx.Theme.WarningText).
-			Render(fmt.Sprintf("Awaiting Approval (%d)", len(awaitingApproval)))
-		parts = append(parts, sectionHeader)
-		parts = append(parts, awaitingApproval...)
-		parts = append(parts, "") // spacing
+	for i, stage := range stageOrder {
+		if i > 0 {
+			parts = append(parts, "") // spacing between stage groups
+		}
+		if stage != "" {
+			parts = append(parts, lipgloss.NewStyle().
+				Bold(true).
+				Foreground(sidebar.ctx.Theme.SecondaryText).
+				Render(stage))
+		}
+		parts = append(parts, byStage[stage]...)
 	}
-
-	parts = append(parts, failures...)
-	parts = append(parts, waiting...)
-	parts = append(parts, rest...)
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,

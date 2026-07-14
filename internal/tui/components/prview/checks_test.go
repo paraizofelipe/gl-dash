@@ -199,7 +199,7 @@ func TestRenderChecks_NoChecks(t *testing.T) {
 	})
 }
 
-func TestRenderChecks_AwaitingApproval(t *testing.T) {
+func TestRenderChecks_ManualJobsShowActionRequiredGlyph(t *testing.T) {
 	jobs := []data.PipelineJob{
 		makeJob("deploy", "prod", data.StatusManual),
 		makeJob("release", "tag", data.StatusManual),
@@ -208,33 +208,14 @@ func TestRenderChecks_AwaitingApproval(t *testing.T) {
 
 	got := m.renderChecks()
 
-	require.True(t, strings.Contains(got, "Awaiting Approval (2)"),
-		"expected 'Awaiting Approval (2)' section, got: %q", got)
-	require.True(t, strings.Contains(got, "deploy/prod"),
-		"expected 'deploy/prod' job name, got: %q", got)
-	require.True(t, strings.Contains(got, "release/tag"),
-		"expected 'release/tag' job name, got: %q", got)
-	require.True(t, strings.Contains(got, constants.ActionRequiredIcon),
-		"expected ActionRequiredIcon, got: %q", got)
-}
-
-func TestRenderChecks_FailedJobs(t *testing.T) {
-	jobs := []data.PipelineJob{
-		makeJob("test", "unit", data.StatusFailed),
-		makeJob("test", "lint", data.StatusSuccess),
-	}
-	m := newEnrichedTestModelForChecks(t, jobs)
-
-	got := m.renderChecks()
-
-	require.True(t, strings.Contains(got, "test/unit"),
-		"expected 'test/unit' job name, got: %q", got)
-	require.True(t, strings.Contains(got, "test/lint"),
-		"expected 'test/lint' job name, got: %q", got)
-	require.True(t, strings.Contains(got, constants.FailureIcon),
-		"expected FailureIcon for failed job, got: %q", got)
-	require.True(t, strings.Contains(got, constants.SuccessIcon),
-		"expected SuccessIcon for successful job, got: %q", got)
+	require.Contains(t, got, "deploy", "expected the 'deploy' stage title")
+	require.Contains(t, got, "release", "expected the 'release' stage title")
+	require.Contains(t, got, "prod", "expected the 'prod' job name")
+	require.Contains(t, got, "tag", "expected the 'tag' job name")
+	require.Contains(t, got, constants.ActionRequiredIcon,
+		"manual jobs use the action-required glyph")
+	require.NotContains(t, got, "Awaiting Approval",
+		"jobs are grouped by stage now, not under an approval section")
 }
 
 func TestRenderChecks_WaitingJobs(t *testing.T) {
@@ -246,50 +227,48 @@ func TestRenderChecks_WaitingJobs(t *testing.T) {
 
 	got := m.renderChecks()
 
-	require.True(t, strings.Contains(got, "build/compile"),
-		"expected 'build/compile' job name, got: %q", got)
-	require.True(t, strings.Contains(got, "build/package"),
-		"expected 'build/package' job name, got: %q", got)
-	require.True(t, strings.Contains(got, constants.WaitingIcon),
-		"expected WaitingIcon for in-progress jobs, got: %q", got)
+	require.Contains(t, got, "build", "expected the 'build' stage title")
+	require.Contains(t, got, "compile")
+	require.Contains(t, got, "package")
+	require.Contains(t, got, constants.WaitingIcon,
+		"in-progress jobs use the waiting glyph")
 }
 
-func TestRenderChecks_MixedStates(t *testing.T) {
+func TestRenderChecks_GroupsByStageInExecutionOrder(t *testing.T) {
+	// Provided out of order and newest-first, the way the API returns them. The
+	// render must group by stage and order stages by ascending job id so the
+	// earliest pipeline stages appear at the top.
 	jobs := []data.PipelineJob{
-		makeJob("deploy", "approval", data.StatusManual),
-		makeJob("test", "unit", data.StatusFailed),
-		makeJob("build", "compile", data.StatusRunning),
-		makeJob("test", "lint", data.StatusSuccess),
+		{ID: 4, Stage: "test", Name: "lint", Status: data.StatusSuccess},
+		{ID: 3, Stage: "test", Name: "unit", Status: data.StatusFailed},
+		{ID: 1, Stage: "install", Name: "deps", Status: data.StatusSuccess},
 	}
 	m := newEnrichedTestModelForChecks(t, jobs)
 
 	got := m.renderChecks()
 
-	require.True(t, strings.Contains(got, "Awaiting Approval (1)"),
-		"expected 'Awaiting Approval (1)' section, got: %q", got)
-	require.True(t, strings.Contains(got, "deploy/approval"),
-		"expected 'deploy/approval' job name, got: %q", got)
-	require.True(t, strings.Contains(got, "test/unit"),
-		"expected 'test/unit' job name, got: %q", got)
-	require.True(t, strings.Contains(got, "build/compile"),
-		"expected 'build/compile' job name, got: %q", got)
-	require.True(t, strings.Contains(got, "test/lint"),
-		"expected 'test/lint' job name, got: %q", got)
-	require.True(t, strings.Contains(got, constants.ActionRequiredIcon),
-		"expected ActionRequiredIcon, got: %q", got)
-	require.True(t, strings.Contains(got, constants.FailureIcon),
-		"expected FailureIcon, got: %q", got)
-	require.True(t, strings.Contains(got, constants.WaitingIcon),
-		"expected WaitingIcon, got: %q", got)
-	require.True(t, strings.Contains(got, constants.SuccessIcon),
-		"expected SuccessIcon, got: %q", got)
-	require.False(t, strings.Contains(got, "Pending ("),
-		"the old header-based 'Pending (N)' section must no longer exist, got: %q", got)
+	// Job lines show only the bare name, not "stage/name".
+	require.Contains(t, got, "deps")
+	require.Contains(t, got, "unit")
+	require.Contains(t, got, "lint")
+	require.NotContains(t, got, "test/unit",
+		"job lines must show only the name; the stage is the group title")
 
-	awaitingIdx := strings.Index(got, "Awaiting Approval")
-	failedIdx := strings.Index(got, "test/unit")
-	require.True(t, awaitingIdx >= 0 && failedIdx >= 0 && awaitingIdx < failedIdx,
-		"expected 'Awaiting Approval' section to render before failures, got: %q", got)
+	// Icons reflect each job's status.
+	require.Contains(t, got, constants.FailureIcon)
+	require.Contains(t, got, constants.SuccessIcon)
+
+	// install (id 1) is the earliest stage, so it renders above test (id 3/4).
+	installIdx := strings.Index(got, "install")
+	testIdx := strings.Index(got, "test")
+	require.GreaterOrEqual(t, installIdx, 0)
+	require.GreaterOrEqual(t, testIdx, 0)
+	require.Less(t, installIdx, testIdx,
+		"earliest stage (install, lowest id) must render above later stages, got: %q", got)
+
+	// Both test jobs stay grouped under a single 'test' title (not repeated).
+	require.Equal(t, 1, strings.Count(got, "test"),
+		"the 'test' stage must appear once as a title, not once per job, got: %q", got)
 }
 
 func TestGetChecksStats(t *testing.T) {
