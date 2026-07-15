@@ -21,7 +21,7 @@ type Data struct {
 	SubjectState        string // State of the PR/Issue (OPEN, CLOSED, MERGED)
 	IsDraft             bool   // Whether PR is a draft
 	Actor               string // Username of the user who triggered the notification
-	ActivityDescription string // Human-readable description of the activity (e.g., "@user commented on this PR")
+	ActivityDescription string // Human-readable description of the activity (e.g., "@user commented on this MR")
 	ResolvedUrl         string // Async-resolved URL (e.g., for CheckSuite -> specific workflow run)
 }
 
@@ -142,7 +142,7 @@ func GenerateActivityDescription(reason, subjectType, actor string) string {
 		if actor != "" {
 			switch subjectType {
 			case data.SubjectTypePullRequest:
-				return fmt.Sprintf("@%s commented on this pull request", actor)
+				return fmt.Sprintf("@%s commented on this merge request", actor)
 			case data.SubjectTypeIssue:
 				return fmt.Sprintf("@%s commented on this issue", actor)
 			default:
@@ -167,7 +167,7 @@ func GenerateActivityDescription(reason, subjectType, actor string) string {
 	case data.ReasonStateChange:
 		switch subjectType {
 		case data.SubjectTypePullRequest:
-			return "Pull request state changed"
+			return "Merge request state changed"
 		case data.SubjectTypeIssue:
 			return "Issue state changed"
 		default:
@@ -179,7 +179,7 @@ func GenerateActivityDescription(reason, subjectType, actor string) string {
 		if actor != "" {
 			switch subjectType {
 			case data.SubjectTypePullRequest:
-				return fmt.Sprintf("@%s commented on this pull request", actor)
+				return fmt.Sprintf("@%s commented on this merge request", actor)
 			case data.SubjectTypeIssue:
 				return fmt.Sprintf("@%s commented on this issue", actor)
 			default:

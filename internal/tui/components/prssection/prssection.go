@@ -593,7 +593,7 @@ func assigneesContains(assignees []data.Assignee, assignee data.Assignee) bool {
 }
 
 func (m Model) GetItemSingularForm() string {
-	return "PR"
+	return "MR"
 }
 
 func (m Model) GetItemPluralForm() string {

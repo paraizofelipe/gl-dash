@@ -67,7 +67,7 @@ var NotificationKeys = NotificationKeyMap{
 	),
 	SwitchToPRs: key.NewBinding(
 		key.WithKeys("s"),
-		key.WithHelp("s", "switch to PRs"),
+		key.WithHelp("s", "switch to MRs"),
 	),
 	ToggleSmartFiltering: key.NewBinding(
 		key.WithKeys("t"),

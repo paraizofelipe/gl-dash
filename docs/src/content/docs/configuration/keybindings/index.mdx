@@ -9,7 +9,7 @@ When a user presses the key or key combination the dashboard shells out and exec
 
 To help you identify your custom commands, an additional `name` property can be supplied to describe it in the help menu.
 
-There are 3 types of keybindings: `universal`, `prs` and `issues`.
+There are 3 types of keybindings: `universal`, `mrs` and `issues`.
 
 ## Key Values
 
@@ -79,11 +79,11 @@ For example:
 
 ```yaml
 keybindings:
-  prs:
+  mrs:
     - key: O
       builtin: checkout
     - key: m
-      command: gh pr merge --admin --repo {{.RepoName}} {{.PrNumber}}
+      command: gh pr merge --admin --repo {{.RepoName}} {{.MrNumber}}
     - key: g
       name: lazygit add
       command: >
@@ -91,7 +91,7 @@ keybindings:
     - key: v
       name: approve
       command: >
-        gh pr review --repo {{.RepoName}} --approve --body "$(gum input --prompt='Approval Comment: ')" {{.PrNumber}}
+        gh pr review --repo {{.RepoName}} --approve --body "$(gum input --prompt='Approval Comment: ')" {{.MrNumber}}
 ```
 
 ### Available Command Arguments
@@ -100,7 +100,7 @@ keybindings:
 | ------------- | ------------------------------------------------------------------------------- |
 | `RepoName`    | The full name of the repo (e.g. `group/project`)                                |
 | `RepoPath`    | The path to the Repo, using the `config.yml` `repoPaths` key to get the mapping |
-| `PrNumber`    | The PR number                                                                   |
+| `MrNumber`    | The PR number                                                                   |
 | `HeadRefName` | The PR's head branch name                                                       |
 | `BaseRefName` | The PR's base branch name                                                       |
 | `Author`      | The username of the PR author                                                   |
@@ -137,18 +137,18 @@ You can add this custom keybinding to your `config.yml` to trigger an AI-assiste
 
 ```yaml
 keybindings:
-  prs:
+  mrs:
     - key: H
       name: herdr AI review
       command: >
-        ~/code/personal/gl-dash/scripts/herdr-mr-review.sh {{.RepoPath}} {{.PrNumber}}
+        ~/code/personal/gl-dash/scripts/herdr-mr-review.sh {{.RepoPath}} {{.MrNumber}}
 ```
 
 This requires `herdr`, `jq` and `claude` to be available on your `PATH`.
 
 **Hard prerequisite: `repoPaths`.** `{{.RepoPath}}` is resolved from the `repoPaths` mapping in `config.yml` (see [Available Command Arguments](#available-command-arguments) above). If the selected repo isn't mapped there, `{{.RepoPath}}` falls back to the current working directory and the review session can open in the wrong repo — map every repo you plan to review under `repoPaths` before using this keybinding.
 
-The script behind the keybinding, `scripts/herdr-mr-review.sh`, is idempotent: it reuses or creates a `code-review` herdr workspace and a `MR-<PrNumber>` tab, then runs `claude "/mr-review <PrNumber>" --dangerously-skip-permissions` in that tab. Pressing `H` again for the same PR just focuses the existing tab instead of starting a new session.
+The script behind the keybinding, `scripts/herdr-mr-review.sh`, is idempotent: it reuses or creates a `code-review` herdr workspace and a `MR-<MrNumber>` tab, then runs `claude "/mr-review <MrNumber>" --dangerously-skip-permissions` in that tab. Pressing `H` again for the same PR just focuses the existing tab instead of starting a new session.
 
 **Security note.** `--dangerously-skip-permissions` runs that Claude Code session without any tool-permission prompts — file edits, git operations, and shell commands the `/mr-review` skill decides to run will execute unattended in your local clone. Because the session's context includes the MR's title, description, diff and comments — content authored by whoever opened the MR — a maliciously crafted MR could attempt to manipulate the AI session into unintended actions, and nothing will interrupt it to ask for confirmation. Only bind this key if you trust the source of the MRs you review this way, and understand what `/mr-review` is allowed to do before enabling it.
 
@@ -218,7 +218,7 @@ The command template receives different fields depending on whether the sidebar 
 
 | State            | PR template fields                       |
 | ---------------- | ---------------------------------------- |
-| Sidebar not open | `RepoName`, `PrNumber`, `RepoPath`       |
+| Sidebar not open | `RepoName`, `MrNumber`, `RepoPath`       |
 | Sidebar open     | + `HeadRefName`, `BaseRefName`, `Author` |
 
 | State            | Issue template fields                 |

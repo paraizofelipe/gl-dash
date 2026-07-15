@@ -7,9 +7,9 @@ In order to launch `ENHANCE` from `DASH` [add a custom keybind](../../../configu
 
 ```yaml
 keybindings:
-  prs:
+  mrs:
     - key: T
-      command: gh enhance -R {{.RepoName}} {{.PrNumber}}
+      command: gh enhance -R {{.RepoName}} {{.MrNumber}}
 ```
 
 _Note: You can change the <kbd>T</kbd> keybind to whatever you want, I just remember it
@@ -21,10 +21,10 @@ If you're working with `tmux`, you can also launch it in a new window:
 
 ```yaml
 keybindings:
-  prs:
+  mrs:
     - key: T
       command: >-
         tmux new-window '
-          gh enhance -R {{.RepoName}} {{.PrNumber}}
+          gh enhance -R {{.RepoName}} {{.MrNumber}}
         '
 ```

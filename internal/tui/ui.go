@@ -333,7 +333,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.CopyNumber):
 			var cmd tea.Cmd
 			if currRowData == nil || reflect.ValueOf(currRowData).IsNil() {
-				cmd = m.notifyErr("Current selection isn't associated with a PR/Issue")
+				cmd = m.notifyErr("Current selection isn't associated with a MR/Issue")
 				return m, cmd
 			}
 			number := fmt.Sprint(currRowData.GetNumber())
@@ -348,7 +348,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.CopyUrl):
 			var cmd tea.Cmd
 			if currRowData == nil || reflect.ValueOf(currRowData).IsNil() {
-				cmd = m.notifyErr("Current selection isn't associated with a PR/Issue")
+				cmd = m.notifyErr("Current selection isn't associated with a MR/Issue")
 				return m, cmd
 			}
 			url := currRowData.GetUrl()
@@ -752,7 +752,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			syncCmd := m.syncSidebar()
 			cmds = append(cmds, syncCmd)
 		} else {
-			log.Error("failed enriching pr", "err", msg.Err)
+			log.Error("failed enriching mr", "err", msg.Err)
 		}
 
 	case notificationPRFetchedMsg:
@@ -785,7 +785,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.markNotificationAsRead(msg.NotificationId)
 		} else {
-			log.Error("failed fetching notification PR", "err", msg.Err)
+			log.Error("failed fetching notification MR", "err", msg.Err)
 		}
 
 	case notificationIssueFetchedMsg:
@@ -1363,7 +1363,7 @@ func (m *Model) renderNotificationPrompt(row *notificationrow.Data) string {
 		Bold(true)
 
 	// Determine subject type display name and primary action
-	typeName := "PR"
+	typeName := "MR"
 	enterAction := "view"
 	if subjectType == "Issue" {
 		typeName = "Issue"
@@ -1372,7 +1372,7 @@ func (m *Model) renderNotificationPrompt(row *notificationrow.Data) string {
 		enterAction = "open in browser"
 	}
 
-	// Main prompt: "Press Enter to view the PR" or "Press Enter to open in browser"
+	// Main prompt: "Press Enter to view the MR" or "Press Enter to open in browser"
 	content.WriteString("\n")
 	content.WriteString(leftMargin)
 	content.WriteString(normalText.Render("Press "))

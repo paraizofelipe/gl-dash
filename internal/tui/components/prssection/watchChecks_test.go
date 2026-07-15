@@ -221,8 +221,8 @@ func TestWatchChecks_StartsTaskWithCorrectConfiguration(t *testing.T) {
 	_ = m.watchChecks()
 
 	require.Equal(t, "pr_watch_checks_42", capturedTask.Id)
-	require.Equal(t, "Watching checks for PR #42", capturedTask.StartText)
-	require.Equal(t, "Watching checks for PR #42", capturedTask.FinishedText)
+	require.Equal(t, "Watching checks for MR #42", capturedTask.StartText)
+	require.Equal(t, "Watching checks for MR #42", capturedTask.FinishedText)
 	require.Equal(t, context.TaskStart, capturedTask.State)
 	require.Nil(t, capturedTask.Error)
 }

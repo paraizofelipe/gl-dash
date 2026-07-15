@@ -303,8 +303,8 @@ func CheckoutPR(ctx *context.ProgramContext, prNumber int, repoName string) (tea
 	taskId := fmt.Sprintf("checkout_%d", prNumber)
 	task := context.Task{
 		Id:           taskId,
-		StartText:    fmt.Sprintf("Checking out PR #%d", prNumber),
-		FinishedText: fmt.Sprintf("PR #%d has been checked out at %s", prNumber, repoPath),
+		StartText:    fmt.Sprintf("Checking out MR #%d", prNumber),
+		FinishedText: fmt.Sprintf("MR #%d has been checked out at %s", prNumber, repoPath),
 		State:        context.TaskStart,
 		Error:        nil,
 	}

@@ -151,7 +151,7 @@ func (m *Model) executeKeybinding(key string) tea.Cmd {
 						continue
 					}
 					log.Debug(
-						"executing notification PR keybind",
+						"executing notification MR keybind",
 						"key",
 						keybinding.Key,
 						"command",
@@ -247,7 +247,8 @@ func (m *Model) runCustomPRCommand(commandTemplate string, prData *prrow.Data) t
 	return m.runCustomCommand(commandTemplate,
 		&map[string]any{
 			"RepoName":    prData.GetRepoNameWithOwner(),
-			"PrNumber":    prData.Primary.Number,
+			"MrNumber":    prData.Primary.Number,
+			"PrNumber":    prData.Primary.Number, // deprecated alias for MrNumber
 			"HeadRefName": prData.Primary.HeadRefName,
 			"BaseRefName": prData.Primary.BaseRefName,
 			"Author":      prData.Primary.Author.Login,
@@ -277,7 +278,8 @@ func (m *Model) runCustomBranchCommand(commandTemplate string, branchData *prrow
 		maps.Copy(input,
 			map[string]any{
 				"RepoName":    branchData.GetRepoNameWithOwner(),
-				"PrNumber":    branchData.Primary.Number,
+				"MrNumber":    branchData.Primary.Number,
+				"PrNumber":    branchData.Primary.Number, // deprecated alias for MrNumber
 				"HeadRefName": branchData.Primary.HeadRefName,
 				"BaseRefName": branchData.Primary.BaseRefName,
 				"Author":      branchData.Primary.Author.Login,
@@ -297,7 +299,8 @@ func (m *Model) runCustomNotificationPRCommand(
 ) tea.Cmd {
 	fields := map[string]any{
 		"RepoName": nData.GetRepoNameWithOwner(),
-		"PrNumber": nData.GetNumber(),
+		"MrNumber": nData.GetNumber(),
+		"PrNumber": nData.GetNumber(), // deprecated alias for MrNumber
 	}
 	if pr := m.notificationView.GetSubjectPR(); pr != nil {
 		fields["HeadRefName"] = pr.Primary.HeadRefName

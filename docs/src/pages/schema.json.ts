@@ -16,7 +16,7 @@ export function GET() {
             type: "string",
           },
         },
-        prSections: {
+        mrSections: {
           title: "Pull Request Sections",
           description: "Define sections for the dashboard's PR view.",
           type: "array",
@@ -96,7 +96,7 @@ export function GET() {
           description: "Define keybindings to run shell commands.",
           type: "object",
           properties: {
-            prs: {
+            mrs: {
               $ref: "./schema/keybindings/prs.json",
             },
             issues: {
@@ -117,16 +117,16 @@ export function GET() {
               ],
             },
             {
-              prs: [
+              mrs: [
                 {
                   key: "c",
                   command:
-                    "tmux new-window -c {{.RepoPath}} '\n  gh pr checkout {{.PrNumber}} &&\n  nvim -c \":DiffviewOpen master...{{.HeadRefName}}\"\n'\n",
+                    "tmux new-window -c {{.RepoPath}} '\n  gh pr checkout {{.MrNumber}} &&\n  nvim -c \":DiffviewOpen master...{{.HeadRefName}}\"\n'\n",
                 },
                 {
                   key: "v",
                   command:
-                    "cd {{.RepoPath}} && code . && gh pr checkout {{.PrNumber}}\n",
+                    "cd {{.RepoPath}} && code . && gh pr checkout {{.MrNumber}}\n",
                 },
               ],
             },

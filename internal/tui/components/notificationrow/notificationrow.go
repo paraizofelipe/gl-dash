@@ -206,7 +206,7 @@ func (n *Notification) getReasonDescription() string {
 	case "comment":
 		switch subjectType {
 		case "PullRequest":
-			return "New comment on pull request"
+			return "New comment on merge request"
 		case "Issue":
 			return "New comment on issue"
 		}

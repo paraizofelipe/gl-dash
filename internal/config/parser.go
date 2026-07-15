@@ -61,7 +61,9 @@ func (a *ViewType) UnmarshalJSON(b []byte) error {
 	switch strings.ToLower(s) {
 	case "notifications":
 		*a = NotificationsView
-	case "prs":
+	// "mrs" is the current name; "prs" stays accepted for backward compatibility
+	// with configs written against the old gh-dash pull-request vocabulary.
+	case "mrs", "prs":
 		*a = PRsView
 	case "issues":
 		*a = IssuesView
@@ -179,14 +181,14 @@ type IssuesLayoutConfig struct {
 }
 
 type LayoutConfig struct {
-	Prs    PrsLayoutConfig    `yaml:"prs,omitempty"`
+	Prs    PrsLayoutConfig    `yaml:"mrs,omitempty"`
 	Issues IssuesLayoutConfig `yaml:"issues,omitempty"`
 }
 
 type Defaults struct {
 	Preview                PreviewConfig `yaml:"preview"`
-	PrsLimit               int           `yaml:"prsLimit"`
-	PrApproveComment       string        `yaml:"prApproveComment,omitempty"`
+	PrsLimit               int           `yaml:"mrsLimit"`
+	PrApproveComment       string        `yaml:"mrApproveComment,omitempty"`
 	IssuesLimit            int           `yaml:"issuesLimit"`
 	NotificationsLimit     int           `yaml:"notificationsLimit"`
 	View                   ViewType      `yaml:"view"`
@@ -197,7 +199,7 @@ type Defaults struct {
 
 type RepoConfig struct {
 	BranchesRefetchIntervalSeconds int `yaml:"branchesRefetchIntervalSeconds,omitempty"`
-	PrsRefetchIntervalSeconds      int `yaml:"prsRefetchIntervalSeconds,omitempty"`
+	PrsRefetchIntervalSeconds      int `yaml:"mrsRefetchIntervalSeconds,omitempty"`
 }
 
 type Keybinding struct {
@@ -226,7 +228,7 @@ func (kb Keybinding) NewBinding(previous *key.Binding) key.Binding {
 type Keybindings struct {
 	Universal     []Keybinding `yaml:"universal,omitempty"`
 	Issues        []Keybinding `yaml:"issues,omitempty"`
-	Prs           []Keybinding `yaml:"prs,omitempty"`
+	Prs           []Keybinding `yaml:"mrs,omitempty"`
 	Branches      []Keybinding `yaml:"branches,omitempty"`
 	Notifications []Keybinding `yaml:"notifications,omitempty"`
 	Cmp           []Keybinding `yaml:"completions,omitempty"`
@@ -319,7 +321,7 @@ type ThemeConfig struct {
 
 type Config struct {
 	Include                  []string                     `yaml:"include,omitempty"`
-	PRSections               []PrsSectionConfig           `yaml:"prSections"`
+	PRSections               []PrsSectionConfig           `yaml:"mrSections"`
 	IssuesSections           []IssuesSectionConfig        `yaml:"issuesSections"`
 	NotificationsSections    []NotificationsSectionConfig `yaml:"notificationsSections"`
 	Repo                     RepoConfig                   `yaml:"repo,omitempty"`
@@ -422,7 +424,7 @@ func (parser ConfigParser) getDefaultConfig() Config {
 		},
 		PRSections: []PrsSectionConfig{
 			{
-				Title:   "My Pull Requests",
+				Title:   "My Merge Requests",
 				Filters: "is:open author:@me",
 			},
 			{
@@ -637,10 +639,79 @@ func (parser ConfigParser) getProvidedConfigPath(location Location) string {
 
 // keybindingTypes are the keybinding groups that are unioned across config
 // layers rather than being replaced wholesale.
-var keybindingTypes = []string{"universal", "prs", "issues", "completions"}
+var keybindingTypes = []string{"universal", "mrs", "issues", "completions"}
 
 // sectionTypes are replaced wholesale by any layer that defines them.
-var sectionTypes = []string{"prSections", "issuesSections", "notificationsSections"}
+var sectionTypes = []string{"mrSections", "issuesSections", "notificationsSections"}
+
+// normalizeLegacyKeys rewrites the deprecated PR-oriented config keys to their
+// MR equivalents in-place. gl-dash renamed the pull-request vocabulary to
+// merge-request, but configs written for the old gh-dash names must keep
+// working — so every config layer is normalized before koanf merges and
+// unmarshals it. When both the old and the new key are present, the new key
+// wins and the legacy one is dropped.
+func normalizeLegacyKeys(root map[string]any) {
+	renameKey(root, "prSections", "mrSections")
+
+	if defaults, ok := root["defaults"].(map[string]any); ok {
+		renameKey(defaults, "prsLimit", "mrsLimit")
+		renameKey(defaults, "prApproveComment", "mrApproveComment")
+		if layout, ok := defaults["layout"].(map[string]any); ok {
+			renameKey(layout, "prs", "mrs")
+		}
+		// The view value was also renamed prs -> mrs; normalize it back to the
+		// internal "prs" identifier the UI still routes on.
+		if v, ok := defaults["view"].(string); ok && strings.EqualFold(v, "mrs") {
+			defaults["view"] = string(PRsView)
+		}
+	}
+
+	if repo, ok := root["repo"].(map[string]any); ok {
+		renameKey(repo, "prsRefetchIntervalSeconds", "mrsRefetchIntervalSeconds")
+	}
+
+	if keybindings, ok := root["keybindings"].(map[string]any); ok {
+		renameKey(keybindings, "prs", "mrs")
+	}
+}
+
+// renameKey moves m[oldKey] to m[newKey] when only the legacy key is present.
+func renameKey(m map[string]any, oldKey, newKey string) {
+	v, hasOld := m[oldKey]
+	if !hasOld {
+		return
+	}
+	if _, hasNew := m[newKey]; !hasNew {
+		m[newKey] = v
+	}
+	delete(m, oldKey)
+}
+
+// legacyAliasParser wraps a koanf parser and rewrites deprecated PR-oriented
+// keys to their MR equivalents right after the raw bytes are parsed, so the
+// rest of the pipeline only ever sees the current MR key names.
+type legacyAliasParser struct {
+	inner koanf.Parser
+}
+
+func (p legacyAliasParser) Unmarshal(b []byte) (map[string]any, error) {
+	m, err := p.inner.Unmarshal(b)
+	if err != nil {
+		return nil, err
+	}
+	normalizeLegacyKeys(m)
+	return m, nil
+}
+
+func (p legacyAliasParser) Marshal(m map[string]any) ([]byte, error) {
+	return p.inner.Marshal(m)
+}
+
+// aliasedYAMLParser is the YAML parser used for loading config layers: it
+// applies the PR -> MR key normalization on top of the standard YAML parser.
+func aliasedYAMLParser() koanf.Parser {
+	return legacyAliasParser{inner: yaml.Parser()}
+}
 
 func mergeOption() koanf.Option {
 	return koanf.WithMergeFunc(func(overrides, dest map[string]any) error {
@@ -721,7 +792,7 @@ func (parser ConfigParser) loadConfigWithIncludes(cfgPath string, seen map[strin
 		}
 	}
 
-	if err := parser.k.Load(file.Provider(cfgPath), yaml.Parser(), mergeOption()); err != nil {
+	if err := parser.k.Load(file.Provider(cfgPath), aliasedYAMLParser(), mergeOption()); err != nil {
 		return parsingError{err: err, path: cfgPath}
 	}
 	log.Info("Loaded config", "path", cfgPath)

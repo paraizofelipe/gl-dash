@@ -17,7 +17,7 @@ import (
 func (m *Model) checkout() (tea.Cmd, error) {
 	pr := m.GetCurrRow()
 	if pr == nil {
-		return nil, errors.New("no pr selected")
+		return nil, errors.New("no mr selected")
 	}
 
 	repoName := pr.GetRepoNameWithOwner()
@@ -33,8 +33,8 @@ func (m *Model) checkout() (tea.Cmd, error) {
 	taskId := fmt.Sprintf("checkout_%d", prNumber)
 	task := context.Task{
 		Id:           taskId,
-		StartText:    fmt.Sprintf("Checking out PR #%d", prNumber),
-		FinishedText: fmt.Sprintf("PR #%d has been checked out at %s", prNumber, repoPath),
+		StartText:    fmt.Sprintf("Checking out MR #%d", prNumber),
+		FinishedText: fmt.Sprintf("MR #%d has been checked out at %s", prNumber, repoPath),
 		State:        context.TaskStart,
 		Error:        nil,
 	}

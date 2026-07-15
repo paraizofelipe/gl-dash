@@ -2,13 +2,13 @@
 title: PR Sections
 ---
 
-# PR Section Options (`prSections`)
+# PR Section Options (`mrSections`)
 
 Defines a section in the dashboard's PRs view.
 
 - Every section must define a [`title`] and [`filters`].
 - When you define [`limit`] for a section, that value overrides the
-  [`defaults.prsLimit`] setting.
+  [`defaults.mrsLimit`] setting.
 - When you define [`layout`] for a section, that value overrides the
   [`defaults.layout.pr`] setting.
 
@@ -16,7 +16,7 @@ Defines a section in the dashboard's PRs view.
 [`filters`]: #pr-filters-filters
 [`limit`]: #pr-fetch-limit-limit
 [`layout`]: #pr-section-layout-layout
-[`defaults.prsLimit`]: /configuration/defaults/#pr-fetch-limit
+[`defaults.mrsLimit`]: /configuration/defaults/#pr-fetch-limit
 [`defaults.layout.pr`]: /configuration/defaults/#layout-options-layout
 
 ## PR Title (`title`)
@@ -80,10 +80,10 @@ This setting defines how many PRs the dashboard should fetch for the section whe
 - You navigate to the next issue in a table without another fetched issue to display.
 - You use the [refresh current section] or [refresh all sections] commands.
 
-This setting overrides the [`defaults.prsLimit`] setting.
+This setting overrides the [`defaults.mrsLimit`] setting.
 
 [01]: https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests
 [fetch interval]: /configuration/defaults/#refetch-interval-in-minutes-refetchintervalminutes
 [refresh current section]: /getting-started/keybindings/global/#r---refresh-current-section
 [refresh all sections]: /getting-started/keybindings/global/#r---refresh-all-sections
-[`defaults.prsLimit`]: /configuration/defaults/#pr-fetch-limit
+[`defaults.mrsLimit`]: /configuration/defaults/#pr-fetch-limit

@@ -837,7 +837,7 @@ func TestGenerateActivityDescription(t *testing.T) {
 			reason:      "comment",
 			subjectType: "PullRequest",
 			actor:       "octocat",
-			expected:    "@octocat commented on this pull request",
+			expected:    "@octocat commented on this merge request",
 		},
 		{
 			name:        "comment on Issue with actor",
@@ -917,7 +917,7 @@ func TestGenerateActivityDescription(t *testing.T) {
 			reason:      "state_change",
 			subjectType: "PullRequest",
 			actor:       "",
-			expected:    "Pull request state changed",
+			expected:    "Merge request state changed",
 		},
 		{
 			name:        "state change on Issue",
@@ -949,7 +949,7 @@ func TestGenerateActivityDescription(t *testing.T) {
 			reason:      "subscribed",
 			subjectType: "PullRequest",
 			actor:       "contributor",
-			expected:    "@contributor commented on this pull request",
+			expected:    "@contributor commented on this merge request",
 		},
 		{
 			name:        "subscribed Issue with actor",

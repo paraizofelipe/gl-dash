@@ -1,4 +1,4 @@
-prSections:
+mrSections:
   - title: My Pull Requests
     filters: is:open author:@me owner:charmbracelet
   - title: Review Requested
@@ -19,11 +19,11 @@ defaults:
   preview:
     open: true
     width: 40
-  prsLimit: 20
+  mrsLimit: 20
   issuesLimit: 20
   view: repo
 keybindings:
-  prs: []
+  mrs: []
 repoPaths: {}
 pager:
   diff: diffnav

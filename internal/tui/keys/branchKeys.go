@@ -32,7 +32,7 @@ var BranchKeys = BranchKeyMap{
 	),
 	CreatePr: key.NewBinding(
 		key.WithKeys("O"),
-		key.WithHelp("O", "create PR"),
+		key.WithHelp("O", "create MR"),
 	),
 	FastForward: key.NewBinding(
 		key.WithKeys("f"),
@@ -52,11 +52,11 @@ var BranchKeys = BranchKeyMap{
 	),
 	UpdatePr: key.NewBinding(
 		key.WithKeys("u"),
-		key.WithHelp("u", "update PR"),
+		key.WithHelp("u", "update MR"),
 	),
 	ViewPRs: key.NewBinding(
 		key.WithKeys("s"),
-		key.WithHelp("s", "Switch to PRs"),
+		key.WithHelp("s", "Switch to MRs"),
 	),
 }
 

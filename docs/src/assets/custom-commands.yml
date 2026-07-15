@@ -1,4 +1,4 @@
-prSections:
+mrSections:
   - title: My Pull Requests
     filters: is:open author:@me owner:dlvhdr
   - title: Needs My Review
@@ -13,7 +13,7 @@ defaults:
   preview:
     open: false
     width: 40
-  prsLimit: 20
+  mrsLimit: 20
   issuesLimit: 20
   view: repo
 keybindings:
@@ -26,13 +26,13 @@ keybindings:
       name: code review
       command: >
         tmux new-window -c {{.RepoPath}} '
-        nvim -c ":silent Octo pr edit {{.PrNumber}}"
+        nvim -c ":silent Octo pr edit {{.MrNumber}}"
         '
-  prs:
+  mrs:
     - key: H
       name: herdr AI review
       command: >
-        ~/code/personal/gl-dash/scripts/herdr-mr-review.sh {{.RepoPath}} {{.PrNumber}}
+        ~/code/personal/gl-dash/scripts/herdr-mr-review.sh {{.RepoPath}} {{.MrNumber}}
 repoPaths:
   dlvhdr/*: ~/code/personal/*
 pager:

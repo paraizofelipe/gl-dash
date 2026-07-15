@@ -1259,12 +1259,12 @@ func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
 		"fullPath": graphql.ID(fullPath),
 		"iid":      graphql.String(iid),
 	}
-	log.Debug("Fetching PR", "url", prUrl)
+	log.Debug("Fetching MR", "url", prUrl)
 	err = c.QueryNamed(context.Background(), "FetchMergeRequest", &queryResult, variables)
 	if err != nil {
 		return EnrichedPullRequestData{}, err
 	}
-	log.Info("Successfully fetched PR", "url", prUrl)
+	log.Info("Successfully fetched MR", "url", prUrl)
 
 	mr := queryResult.Project.MergeRequest
 	enriched := mr.toEnrichedPullRequestData(fullPath)

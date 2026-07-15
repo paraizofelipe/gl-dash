@@ -18,8 +18,8 @@ func (m *Model) label(labels []string) tea.Cmd {
 	taskId := fmt.Sprintf("pr_label_%d", prNumber)
 	task := context.Task{
 		Id:           taskId,
-		StartText:    fmt.Sprintf("Labeling pr #%d to %s", prNumber, labels),
-		FinishedText: fmt.Sprintf("pr #%d has been labeled with %s", prNumber, labels),
+		StartText:    fmt.Sprintf("Labeling mr #%d to %s", prNumber, labels),
+		FinishedText: fmt.Sprintf("mr #%d has been labeled with %s", prNumber, labels),
 		State:        context.TaskStart,
 		Error:        nil,
 	}

@@ -148,8 +148,8 @@ func (m *Model) viewMergeStatus() (string, checkSectionStatus) {
 		status = statusSuccess
 	} else if m.pr.Data.Primary.IsDraft {
 		icon = m.ctx.Styles.Common.DraftGlyph
-		title = "This pull request is still a work in progress"
-		subtitle = "Draft pull requests cannot be merged"
+		title = "This merge request is still a work in progress"
+		subtitle = "Draft merge requests cannot be merged"
 		status = statusWaiting
 	} else if m.pr.Data.Primary.MergeStateStatus == "BLOCKED" {
 		icon = m.ctx.Styles.Common.FailureGlyph
@@ -177,7 +177,7 @@ func (m *Model) viewMergedStatus() string {
 		Width(w)
 	return box.Render(m.viewCheckCategory(
 		m.ctx.Styles.Common.MergedGlyph,
-		"Pull request successfully merged and closed",
+		"Merge request successfully merged and closed",
 		"The branch has been merged",
 		true,
 	))
@@ -192,7 +192,7 @@ func (m *Model) viewClosedStatus() string {
 	return box.Render(m.viewCheckCategory(
 		"",
 		"Closed with unmerged commits",
-		"This pull request is closed",
+		"This merge request is closed",
 		true,
 	))
 }

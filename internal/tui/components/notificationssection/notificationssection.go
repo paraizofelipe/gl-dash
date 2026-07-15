@@ -981,10 +981,10 @@ func (m *Model) fetchCommentCountsForNotifications(notifications []notificationr
 			// Capture variables for closure
 			id, url, readAt, fallbackActor := notifId, subjectUrl, lastReadAt, notifActor
 			cmds = append(cmds, func() tea.Msg {
-				log.Debug("Fetching PR for comment count", "url", url)
+				log.Debug("Fetching MR for comment count", "url", url)
 				pr, err := data.FetchPullRequest(url)
 				if err != nil {
-					log.Error("Failed to fetch PR for comment count", "url", url, "err", err)
+					log.Error("Failed to fetch MR for comment count", "url", url, "err", err)
 					return nil
 				}
 				count := countNewPRComments(pr, readAt)
@@ -993,7 +993,7 @@ func (m *Model) fetchCommentCountsForNotifications(notifications []notificationr
 					actor = pr.Author.Login
 				}
 				log.Debug(
-					"Got PR comment count",
+					"Got MR comment count",
 					"id",
 					id,
 					"count",

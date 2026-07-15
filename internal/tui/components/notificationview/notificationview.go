@@ -99,7 +99,7 @@ func (m *Model) SetPendingPRAction(action string) string {
 		actionDisplay = "approve all workflows for"
 	}
 	return fmt.Sprintf(
-		"Are you sure you want to %s PR #%d? (y/N)",
+		"Are you sure you want to %s MR #%d? (y/N)",
 		actionDisplay,
 		m.subjectPR.GetNumber(),
 	)

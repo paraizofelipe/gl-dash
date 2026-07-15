@@ -15,7 +15,7 @@ These examples show a few ways you might configure your dashboard.
 <div style="max-height: 500px; overflow-y:scroll;">
 
 ```yaml
-prSections:
+mrSections:
   - title: "My Pull Requests"
     filters: "is:open author:@me"
   - title: "Needs My Review"
@@ -55,10 +55,10 @@ showAuthorIcons: true
 smartFilteringAtLaunch: true
 
 defaults:
-  view: prs
+  view: mrs
   refetchIntervalMinutes: 5
   layout:
-    prs:
+    mrs:
       repoName:
         grow: true,
         width: 10
@@ -68,7 +68,7 @@ defaults:
   preview:
     open: true
     width: 84
-  prsLimit: 20
+  mrsLimit: 20
   issuesLimit: 20
   notificationsLimit: 20
 
@@ -130,16 +130,16 @@ keybindings:
       name: lazygit
       command: >
         cd {{.RepoPath}} && lazygit
-  prs:
+  mrs:
     - key: O
       builtin: checkout
     - key: m
-      command: gh pr merge --admin --repo {{.RepoName}} {{.PrNumber}}
+      command: gh pr merge --admin --repo {{.RepoName}} {{.MrNumber}}
     - key: C
       name: code review
       command: >
         tmux new-window -c {{.RepoPath}} '
-        nvim -c ":silent Octo pr edit {{.PrNumber}}"
+        nvim -c ":silent Octo pr edit {{.MrNumber}}"
         '
     - key: a
       name: lazygit add
@@ -148,7 +148,7 @@ keybindings:
     - key: v
       name: approve
       command: >
-        gh pr review --repo {{.RepoName}} --approve --body "$(gum input --prompt='Approval Comment: ')" {{.PrNumber}}
+        gh pr review --repo {{.RepoName}} --approve --body "$(gum input --prompt='Approval Comment: ')" {{.MrNumber}}
 ```
 
 ## Repo Paths Example

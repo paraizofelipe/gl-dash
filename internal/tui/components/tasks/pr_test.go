@@ -87,8 +87,8 @@ func TestApproveWorkflows_TaskConfiguration(t *testing.T) {
 	_ = ApproveWorkflows(ctx, section, pr)
 
 	require.Equal(t, "pr_approve_workflows_42", capturedTask.Id)
-	require.Equal(t, "Approving workflows for PR #42", capturedTask.StartText)
-	require.Equal(t, "Workflows for PR #42 have been approved", capturedTask.FinishedText)
+	require.Equal(t, "Approving workflows for MR #42", capturedTask.StartText)
+	require.Equal(t, "Workflows for MR #42 have been approved", capturedTask.FinishedText)
 	require.Equal(t, context.TaskStart, capturedTask.State)
 	require.Nil(t, capturedTask.Error)
 }

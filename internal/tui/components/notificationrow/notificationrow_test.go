@@ -55,7 +55,7 @@ func TestGetReasonDescription(t *testing.T) {
 			name:        "comment on PR",
 			reason:      "comment",
 			subjectType: "PullRequest",
-			expected:    "New comment on pull request",
+			expected:    "New comment on merge request",
 		},
 		{
 			name:        "comment on Issue",

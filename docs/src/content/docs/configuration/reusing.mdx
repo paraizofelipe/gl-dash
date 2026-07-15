@@ -47,7 +47,7 @@ Then in a git repo you could create a `.gl-dash.yml` file defining just the
 sections:
 
 ```yaml
-prSections:
+mrSections:
   - title: Bugs
     filters: is:open author:@me [BUG]
   - title: Our Packages
@@ -55,7 +55,7 @@ prSections:
 ```
 
 Starting `DASH` from the git repo, the final config used will have the `pager`, `theme` and `keybindings`
-from your global config and the `prSections` from your repo's config.
+from your global config and the `mrSections` from your repo's config.
 
 ## Including Other Config Files
 
@@ -68,7 +68,7 @@ include:
   - ~/.config/gl-dash/themes/tokyonight.yml
   - ./shared-keybindings.yml
 
-prSections:
+mrSections:
   - title: Bugs
     filters: is:open author:@me [BUG]
 ```

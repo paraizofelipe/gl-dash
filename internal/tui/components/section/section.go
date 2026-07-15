@@ -517,19 +517,19 @@ func (m *BaseModel) GetPromptConfirmation() string {
 		var prompt string
 		switch {
 		case m.PromptConfirmationAction == "close" && m.Ctx.View == config.PRsView:
-			prompt = "Are you sure you want to close this PR? (y/N) "
+			prompt = "Are you sure you want to close this MR? (y/N) "
 
 		case m.PromptConfirmationAction == "reopen" && m.Ctx.View == config.PRsView:
-			prompt = "Are you sure you want to reopen this PR? (y/N) "
+			prompt = "Are you sure you want to reopen this MR? (y/N) "
 
 		case m.PromptConfirmationAction == "ready" && m.Ctx.View == config.PRsView:
-			prompt = "Are you sure you want to mark this PR as ready? (y/N) "
+			prompt = "Are you sure you want to mark this MR as ready? (y/N) "
 
 		case m.PromptConfirmationAction == "merge" && m.Ctx.View == config.PRsView:
-			prompt = "Are you sure you want to merge this PR? (y/N) "
+			prompt = "Are you sure you want to merge this MR? (y/N) "
 
 		case m.PromptConfirmationAction == "update" && m.Ctx.View == config.PRsView:
-			prompt = "Are you sure you want to update this PR? (y/N) "
+			prompt = "Are you sure you want to update this MR? (y/N) "
 
 		case m.PromptConfirmationAction == "approveWorkflows" && m.Ctx.View == config.PRsView:
 			prompt = "Run all manual jobs in this pipeline? This may include deploys. (y/N) "
@@ -544,7 +544,7 @@ func (m *BaseModel) GetPromptConfirmation() string {
 		case m.PromptConfirmationAction == "new" && m.Ctx.View == config.RepoView:
 			prompt = "Enter branch name: "
 		case m.PromptConfirmationAction == "create_pr" && m.Ctx.View == config.RepoView:
-			prompt = "Enter PR title: "
+			prompt = "Enter MR title: "
 		case m.PromptConfirmationAction == "done_all" && m.Ctx.View == config.NotificationsView:
 			prompt = "Mark ALL pending GitLab todos as done? This affects your whole account, not just what's shown here. (y/N) "
 

@@ -90,7 +90,7 @@ var PRKeys = PRKeyMap{
 	),
 	Update: key.NewBinding(
 		key.WithKeys("u"),
-		key.WithHelp("u", "update pr from base branch"),
+		key.WithHelp("u", "update mr from base branch"),
 	),
 	WatchChecks: key.NewBinding(
 		key.WithKeys("w"),
@@ -155,7 +155,7 @@ func rebindPRKeys(keys []config.Keybinding) error {
 			continue
 		}
 
-		log.Debug("Rebinding PR key", "builtin", prKey.Builtin, "key", prKey.Key)
+		log.Debug("Rebinding MR key", "builtin", prKey.Builtin, "key", prKey.Key)
 
 		var key *key.Binding
 
@@ -197,7 +197,7 @@ func rebindPRKeys(keys []config.Keybinding) error {
 		case "summaryViewMore":
 			key = &PRKeys.SummaryViewMore
 		default:
-			return fmt.Errorf("unknown built-in pr key: '%s'", prKey.Builtin)
+			return fmt.Errorf("unknown built-in mr key: '%s'", prKey.Builtin)
 		}
 
 		key.SetKeys(prKey.Key)

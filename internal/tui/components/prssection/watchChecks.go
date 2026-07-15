@@ -77,8 +77,8 @@ func (m *Model) watchChecks() tea.Cmd {
 	taskId := fmt.Sprintf("pr_watch_checks_%d", prNumber)
 	task := context.Task{
 		Id:           taskId,
-		StartText:    fmt.Sprintf("Watching checks for PR #%d", prNumber),
-		FinishedText: fmt.Sprintf("Watching checks for PR #%d", prNumber),
+		StartText:    fmt.Sprintf("Watching checks for MR #%d", prNumber),
+		FinishedText: fmt.Sprintf("Watching checks for MR #%d", prNumber),
 		State:        context.TaskStart,
 		Error:        nil,
 	}
@@ -179,7 +179,7 @@ func (m *Model) onWatchPipelineResultMsg(msg watchPipelineResultMsg) tea.Cmd {
 func notifyWatchChecksResult(msg watchPipelineResultMsg, summary string) {
 	err := beeep.Notify(
 		fmt.Sprintf("gh-dash: %s", msg.prTitle),
-		fmt.Sprintf("PR #%d in %s\n%s", msg.prNumber, msg.repoNameWithOwner, summary),
+		fmt.Sprintf("MR #%d in %s\n%s", msg.prNumber, msg.repoNameWithOwner, summary),
 		"",
 	)
 	if err != nil {

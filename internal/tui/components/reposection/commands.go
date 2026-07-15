@@ -240,8 +240,8 @@ func (m *Model) fetchPRsCmd() tea.Cmd {
 	prsTaskId := fmt.Sprintf("fetching_pr_branches_%d", time.Now().Unix())
 	task := context.Task{
 		Id:           prsTaskId,
-		StartText:    "Fetching PRs",
-		FinishedText: "PRs fetched",
+		StartText:    "Fetching MRs",
+		FinishedText: "MRs fetched",
 		State:        context.TaskStart,
 		Error:        nil,
 	}
@@ -282,8 +282,8 @@ func (m *Model) fetchPRCmd(branch string) []tea.Cmd {
 	prsTaskId := fmt.Sprintf("fetching_pr_for_branch_%s_%d", branch, time.Now().Unix())
 	task := context.Task{
 		Id:           prsTaskId,
-		StartText:    fmt.Sprintf("Fetching PR for branch %s", branch),
-		FinishedText: "PR fetched",
+		StartText:    fmt.Sprintf("Fetching MR for branch %s", branch),
+		FinishedText: "MR fetched",
 		State:        context.TaskStart,
 		Error:        nil,
 	}
@@ -298,7 +298,7 @@ func (m *Model) fetchPRCmd(branch string) []tea.Cmd {
 			1,
 			nil,
 		)
-		log.Debug("Fetching PRs", "res", res)
+		log.Debug("Fetching MRs", "res", res)
 		if err != nil {
 			return constants.TaskFinishedMsg{
 				SectionId:   0,
@@ -313,7 +313,7 @@ func (m *Model) fetchPRCmd(branch string) []tea.Cmd {
 				SectionId:   0,
 				SectionType: SectionType,
 				TaskId:      prsTaskId,
-				Err:         fmt.Errorf("expected 1 PR, got %d", len(res.Prs)),
+				Err:         fmt.Errorf("expected 1 MR, got %d", len(res.Prs)),
 			}
 		}
 

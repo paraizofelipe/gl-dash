@@ -10,7 +10,6 @@ import (
 
 	"charm.land/log/v2"
 	"github.com/google/go-cmp/cmp"
-	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 	"github.com/stretchr/testify/assert"
@@ -228,11 +227,107 @@ func TestParseConfig_ProjectAliasesPopulated(t *testing.T) {
 	require.Equal(t, "luizalabs/canais-digitais/navegacao/catalogo", cfg.ProjectAliases["catalogo"])
 }
 
+func TestParseConfig_MRKeysAreParsed(t *testing.T) {
+	dir := t.TempDir()
+	configPath := path.Join(dir, "config.yml")
+	contents := `mrSections:
+  - title: My MRs
+    filters: is:open author:@me
+defaults:
+  view: mrs
+  mrsLimit: 42
+  mrApproveComment: SHIP IT
+  layout:
+    mrs:
+      author:
+        width: 17
+repo:
+  mrsRefetchIntervalSeconds: 90
+keybindings:
+  mrs:
+    - key: X
+      command: echo hi
+`
+	err := os.WriteFile(configPath, []byte(contents), 0o600)
+	testutils.AssertNoError(t, err)
+
+	cfg, err := ParseConfig(Location{ConfigFlag: configPath, SkipGlobalConfig: true})
+	testutils.AssertNoError(t, err)
+
+	require.Len(t, cfg.PRSections, 1)
+	require.Equal(t, "My MRs", cfg.PRSections[0].Title)
+	require.Equal(t, PRsView, cfg.Defaults.View)
+	require.Equal(t, 42, cfg.Defaults.PrsLimit)
+	require.Equal(t, "SHIP IT", cfg.Defaults.PrApproveComment)
+	require.NotNil(t, cfg.Defaults.Layout.Prs.Author.Width)
+	require.Equal(t, 17, *cfg.Defaults.Layout.Prs.Author.Width)
+	require.Equal(t, 90, cfg.Repo.PrsRefetchIntervalSeconds)
+	require.Len(t, cfg.Keybindings.Prs, 1)
+	require.Equal(t, "X", cfg.Keybindings.Prs[0].Key)
+}
+
+func TestParseConfig_LegacyPRKeysStillParse(t *testing.T) {
+	dir := t.TempDir()
+	configPath := path.Join(dir, "config.yml")
+	// Written entirely with the deprecated gh-dash PR vocabulary; it must keep
+	// populating the same fields the MR keys do.
+	contents := `prSections:
+  - title: Legacy PRs
+    filters: is:open author:@me
+defaults:
+  view: prs
+  prsLimit: 11
+  prApproveComment: LGTM
+  layout:
+    prs:
+      author:
+        width: 8
+repo:
+  prsRefetchIntervalSeconds: 30
+keybindings:
+  prs:
+    - key: Z
+      command: echo legacy
+`
+	err := os.WriteFile(configPath, []byte(contents), 0o600)
+	testutils.AssertNoError(t, err)
+
+	cfg, err := ParseConfig(Location{ConfigFlag: configPath, SkipGlobalConfig: true})
+	testutils.AssertNoError(t, err)
+
+	require.Len(t, cfg.PRSections, 1)
+	require.Equal(t, "Legacy PRs", cfg.PRSections[0].Title)
+	require.Equal(t, PRsView, cfg.Defaults.View)
+	require.Equal(t, 11, cfg.Defaults.PrsLimit)
+	require.Equal(t, "LGTM", cfg.Defaults.PrApproveComment)
+	require.NotNil(t, cfg.Defaults.Layout.Prs.Author.Width)
+	require.Equal(t, 8, *cfg.Defaults.Layout.Prs.Author.Width)
+	require.Equal(t, 30, cfg.Repo.PrsRefetchIntervalSeconds)
+	require.Len(t, cfg.Keybindings.Prs, 1)
+	require.Equal(t, "Z", cfg.Keybindings.Prs[0].Key)
+}
+
+func TestParseConfig_MRKeysWinOverLegacyPRKeys(t *testing.T) {
+	dir := t.TempDir()
+	configPath := path.Join(dir, "config.yml")
+	contents := `defaults:
+  mrsLimit: 5
+  prsLimit: 99
+`
+	err := os.WriteFile(configPath, []byte(contents), 0o600)
+	testutils.AssertNoError(t, err)
+
+	cfg, err := ParseConfig(Location{ConfigFlag: configPath, SkipGlobalConfig: true})
+	testutils.AssertNoError(t, err)
+
+	require.Equal(t, 5, cfg.Defaults.PrsLimit)
+}
+
 func loadExpected(t *testing.T, fpath string) Config {
 	t.Helper()
 	cwd := Testwd(t)
 	k := koanf.NewWithConf(conf)
-	err := k.Load(file.Provider(path.Join(cwd, fpath)), yaml.Parser())
+	err := k.Load(file.Provider(path.Join(cwd, fpath)), aliasedYAMLParser())
 	testutils.AssertNoError(t, err)
 
 	expected := Config{}

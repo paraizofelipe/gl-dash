@@ -80,8 +80,8 @@ func OpenBranchPR(ctx *context.ProgramContext, section SectionIdentifier, branch
 	return runMRAction(
 		ctx, section,
 		fmt.Sprintf("branch_open_%s", branch),
-		fmt.Sprintf("Opening PR for branch %s", branch),
-		fmt.Sprintf("PR for branch %s has been opened", branch),
+		fmt.Sprintf("Opening MR for branch %s", branch),
+		fmt.Sprintf("MR for branch %s has been opened", branch),
 		func() (tea.Msg, error) {
 			projectPath := git.GetRepoShortName(ctx.RepoUrl)
 			webURL, err := data.FindMergeRequestWebURLByBranch(projectPath, branch)
@@ -98,8 +98,8 @@ func ReopenPR(ctx *context.ProgramContext, section SectionIdentifier, pr data.Ro
 	return runMRAction(
 		ctx, section,
 		buildTaskId("pr_reopen", prNumber),
-		fmt.Sprintf("Reopening PR #%d", prNumber),
-		fmt.Sprintf("PR #%d has been reopened", prNumber),
+		fmt.Sprintf("Reopening MR #%d", prNumber),
+		fmt.Sprintf("MR #%d has been reopened", prNumber),
 		func() (tea.Msg, error) {
 			err := data.ReopenMergeRequest(pr.GetRepoNameWithOwner(), prNumber)
 			return UpdatePRMsg{PrNumber: prNumber, IsClosed: utils.BoolPtr(false)}, err
@@ -112,8 +112,8 @@ func ClosePR(ctx *context.ProgramContext, section SectionIdentifier, pr data.Row
 	return runMRAction(
 		ctx, section,
 		buildTaskId("pr_close", prNumber),
-		fmt.Sprintf("Closing PR #%d", prNumber),
-		fmt.Sprintf("PR #%d has been closed", prNumber),
+		fmt.Sprintf("Closing MR #%d", prNumber),
+		fmt.Sprintf("MR #%d has been closed", prNumber),
 		func() (tea.Msg, error) {
 			err := data.CloseMergeRequest(pr.GetRepoNameWithOwner(), prNumber)
 			return UpdatePRMsg{PrNumber: prNumber, IsClosed: utils.BoolPtr(true)}, err
@@ -126,8 +126,8 @@ func PRReady(ctx *context.ProgramContext, section SectionIdentifier, pr data.Row
 	return runMRAction(
 		ctx, section,
 		buildTaskId("pr_ready", prNumber),
-		fmt.Sprintf("Marking PR #%d as ready for review", prNumber),
-		fmt.Sprintf("PR #%d has been marked as ready for review", prNumber),
+		fmt.Sprintf("Marking MR #%d as ready for review", prNumber),
+		fmt.Sprintf("MR #%d has been marked as ready for review", prNumber),
 		func() (tea.Msg, error) {
 			err := data.MarkMergeRequestReady(pr.GetRepoNameWithOwner(), prNumber)
 			return UpdatePRMsg{PrNumber: prNumber, ReadyForReview: utils.BoolPtr(true)}, err
@@ -140,8 +140,8 @@ func MergePR(ctx *context.ProgramContext, section SectionIdentifier, pr data.Row
 	return runMRAction(
 		ctx, section,
 		fmt.Sprintf("merge_%d", prNumber),
-		fmt.Sprintf("Merging PR #%d", prNumber),
-		fmt.Sprintf("PR #%d has been merged", prNumber),
+		fmt.Sprintf("Merging MR #%d", prNumber),
+		fmt.Sprintf("MR #%d has been merged", prNumber),
 		func() (tea.Msg, error) {
 			err := data.AcceptMergeRequest(pr.GetRepoNameWithOwner(), prNumber)
 			isMerged := err == nil
@@ -159,8 +159,8 @@ func CreatePR(
 	taskId := fmt.Sprintf("create_pr_%s", title)
 	task := context.Task{
 		Id:           taskId,
-		StartText:    fmt.Sprintf(`Creating PR "%s"`, title),
-		FinishedText: fmt.Sprintf(`PR "%s" has been created`, title),
+		StartText:    fmt.Sprintf(`Creating MR "%s"`, title),
+		FinishedText: fmt.Sprintf(`MR "%s" has been created`, title),
 		State:        context.TaskStart,
 		Error:        nil,
 	}
@@ -192,8 +192,8 @@ func UpdatePR(ctx *context.ProgramContext, section SectionIdentifier, pr data.Ro
 	return runMRAction(
 		ctx, section,
 		buildTaskId("pr_update", prNumber),
-		fmt.Sprintf("Updating PR #%d", prNumber),
-		fmt.Sprintf("PR #%d has been updated", prNumber),
+		fmt.Sprintf("Updating MR #%d", prNumber),
+		fmt.Sprintf("MR #%d has been updated", prNumber),
 		func() (tea.Msg, error) {
 			err := data.RebaseMergeRequest(pr.GetRepoNameWithOwner(), prNumber)
 			return UpdatePRMsg{PrNumber: prNumber}, err
@@ -219,8 +219,8 @@ func AssignPR(
 	return runMRAction(
 		ctx, section,
 		buildTaskId("pr_assign", prNumber),
-		fmt.Sprintf("Assigning pr #%d to %s", prNumber, usernames),
-		fmt.Sprintf("pr #%d has been assigned to %s", prNumber, usernames),
+		fmt.Sprintf("Assigning mr #%d to %s", prNumber, usernames),
+		fmt.Sprintf("mr #%d has been assigned to %s", prNumber, usernames),
 		func() (tea.Msg, error) {
 			err := data.AddMergeRequestAssignees(pr.GetRepoNameWithOwner(), prNumber, usernames)
 			returnedAssignees := toAssignees(usernames)
@@ -239,8 +239,8 @@ func UnassignPR(
 	return runMRAction(
 		ctx, section,
 		buildTaskId("pr_unassign", prNumber),
-		fmt.Sprintf("Unassigning %s from pr #%d", usernames, prNumber),
-		fmt.Sprintf("%s unassigned from pr #%d", usernames, prNumber),
+		fmt.Sprintf("Unassigning %s from mr #%d", usernames, prNumber),
+		fmt.Sprintf("%s unassigned from mr #%d", usernames, prNumber),
 		func() (tea.Msg, error) {
 			err := data.RemoveMergeRequestAssignees(pr.GetRepoNameWithOwner(), prNumber, usernames)
 			returnedAssignees := toAssignees(usernames)
@@ -259,8 +259,8 @@ func CommentOnPR(
 	return runMRAction(
 		ctx, section,
 		buildTaskId("pr_comment", prNumber),
-		fmt.Sprintf("Commenting on PR #%d", prNumber),
-		fmt.Sprintf("Commented on PR #%d", prNumber),
+		fmt.Sprintf("Commenting on MR #%d", prNumber),
+		fmt.Sprintf("Commented on MR #%d", prNumber),
 		func() (tea.Msg, error) {
 			err := data.CommentOnMergeRequest(pr.GetRepoNameWithOwner(), prNumber, body)
 			return UpdatePRMsg{
@@ -285,8 +285,8 @@ func ApprovePR(
 	return runMRAction(
 		ctx, section,
 		buildTaskId("pr_approve", prNumber),
-		fmt.Sprintf("Approving pr #%d", prNumber),
-		fmt.Sprintf("pr #%d has been approved", prNumber),
+		fmt.Sprintf("Approving mr #%d", prNumber),
+		fmt.Sprintf("mr #%d has been approved", prNumber),
 		func() (tea.Msg, error) {
 			err := data.ApproveMergeRequest(pr.GetRepoNameWithOwner(), prNumber, comment)
 			return UpdatePRMsg{PrNumber: prNumber}, err
@@ -305,8 +305,8 @@ func ApproveWorkflows(
 
 	task := context.Task{
 		Id:           taskId,
-		StartText:    fmt.Sprintf("Approving workflows for PR #%d", prNumber),
-		FinishedText: fmt.Sprintf("Workflows for PR #%d have been approved", prNumber),
+		StartText:    fmt.Sprintf("Approving workflows for MR #%d", prNumber),
+		FinishedText: fmt.Sprintf("Workflows for MR #%d have been approved", prNumber),
 		State:        context.TaskStart,
 		Error:        nil,
 	}

@@ -11,10 +11,10 @@ export function GET() {
           open: true,
           width: 0.45,
         },
-        prsLimit: 20,
-        prApproveComment: "LGTM",
+        mrsLimit: 20,
+        mrApproveComment: "LGTM",
         issuesLimit: 20,
-        view: "prs",
+        view: "mrs",
         refetchIntervalMinutes: 30,
       },
       properties: {
@@ -24,7 +24,7 @@ export function GET() {
             "Defines the layout for the work item tables in the dashboard.",
           type: "object",
           properties: {
-            prs: {
+            mrs: {
               $ref: "./layout/pr.json",
             },
             issues: {
@@ -32,7 +32,7 @@ export function GET() {
             },
           },
         },
-        prsLimit: {
+        mrsLimit: {
           title: "PR Fetch Limit",
           description:
             "Global limit on the number of PRs fetched for the dashboard",
@@ -90,10 +90,10 @@ export function GET() {
           description:
             "Specifies which dashboard view should be displayed on load.",
           type: "string",
-          enum: ["notifications", "issues", "prs"],
-          default: "prs",
+          enum: ["notifications", "issues", "mrs", "prs"],
+          default: "mrs",
         },
-        prApproveComment: {
+        mrApproveComment: {
           title: "PR Approve Comment",
           description: "The default comment prefilled when approving a PR.",
           type: "string",

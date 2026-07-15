@@ -11,15 +11,15 @@ settings on a per-section basis.
 defaults:
   issuesLimit: 20
   notificationsLimit: 20
-  prApproveComment: LGTM
+  mrApproveComment: LGTM
   preview:
     open: true
     width: 0.45
     height: 0.60
     position: auto
-  prsLimit: 20
+  mrsLimit: 20
   refetchIntervalMinutes: 30
-  view: prs
+  view: mrs
 ```
 
 By default, the dashboard is configured to:
@@ -38,11 +38,11 @@ For more details on the default layouts, see the documentation for [PR] and [iss
 ### Layout Options (`layout`)
 
 This setting defines the layout for the work item tables in the dashboard. You can override
-these settings in any section you define in the [`prSections`] or [`issueSections`] settings.
+these settings in any section you define in the [`mrSections`] or [`issueSections`] settings.
 
 They determine which columns are displayed and how.
 
-[`prSections`]: /configuration/pr-section
+[`mrSections`]: /configuration/pr-section
 [`issueSections`]: /configuration/issue-section
 
 #### PR Section Layout
@@ -230,14 +230,14 @@ You may need to adjust the layout column width depending on your format.
 
 | Type   |              Options              | Default |
 | :----- | :-------------------------------: | :-----: |
-| String | "notifications", "prs", "issues" |  "prs"  |
+| String | "notifications", "mrs", "issues" |  "mrs"  |
 
 This setting defines whether the dashboard should display the Notifications, PRs, or Issues
 view when it first loads.
 
 By default, the dashboard displays the PRs view.
 
-### PR Approval (`prApproveComment`)
+### PR Approval (`mrApproveComment`)
 
 | Type   | Default |
 | :----- | :-----: |

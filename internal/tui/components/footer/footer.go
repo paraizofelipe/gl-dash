@@ -131,7 +131,7 @@ func (m *Model) renderViewButton(view config.ViewType) string {
 		label = ""
 	case config.PRsView:
 		icon = ""
-		label = " PRs"
+		label = " MRs"
 	case config.IssuesView:
 		icon = ""
 		label = " Issues"
