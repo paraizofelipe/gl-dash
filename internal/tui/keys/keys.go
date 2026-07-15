@@ -163,7 +163,7 @@ var Keys = &KeyMap{
 	),
 	OpenGithub: key.NewBinding(
 		key.WithKeys("o"),
-		key.WithHelp("o", "open in GitHub"),
+		key.WithHelp("o", "open in GitLab"),
 	),
 	Refresh: key.NewBinding(
 		key.WithKeys("r"),
