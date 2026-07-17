@@ -196,8 +196,12 @@ func (pr *PullRequest) renderExtendedTitle(isSelected bool) string {
 
 	author := baseStyle.Bold(true).Foreground(pr.Ctx.Theme.AuthorText).Render(fmt.Sprintf("@%s",
 		pr.Data.Primary.GetAuthor(pr.Ctx.Theme, pr.ShowAuthorIcon)))
+	mrNumber := baseStyle.Foreground(pr.Ctx.Theme.MrNumberText).
+		Render(fmt.Sprintf("#%d", pr.Data.Primary.Number))
+	// The separators are rendered with baseStyle so the selected-row background
+	// carries across them; a bare string after mrNumber's reset would lose it.
 	top := lipgloss.JoinHorizontal(lipgloss.Top, pr.Data.Primary.Repository.NameWithOwner,
-		fmt.Sprintf(" #%d by %s", pr.Data.Primary.Number, author))
+		baseStyle.Render(" "), mrNumber, baseStyle.Render(" by "), author)
 	branchHidden := pr.Ctx.Config.Defaults.Layout.Prs.Base.Hidden
 	if branchHidden == nil || !*branchHidden {
 		branch := baseStyle.Render(pr.Data.Primary.HeadRefName)

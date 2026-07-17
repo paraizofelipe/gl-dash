@@ -23,6 +23,7 @@ type Theme struct {
 	ErrorText               compat.AdaptiveColor // config.Theme.Colors.Text.Error
 	ActorText               compat.AdaptiveColor // config.Theme.Colors.Text.Actor
 	AuthorText              compat.AdaptiveColor // config.Theme.Colors.Text.Author
+	MrNumberText            compat.AdaptiveColor // config.Theme.Colors.Text.MrNumber
 	NewContributorIconColor compat.AdaptiveColor // config.Theme.Colors.Icon.NewContributor
 	ContributorIconColor    compat.AdaptiveColor // config.Theme.Colors.Icon.Contributor
 	CollaboratorIconColor   compat.AdaptiveColor // config.Theme.Colors.Icon.Collaborator
@@ -90,6 +91,11 @@ var DefaultTheme = &Theme{
 		Light: lipgloss.ANSIColor(75),
 		Dark:  lipgloss.ANSIColor(75),
 	},
+	MrNumberText: compat.AdaptiveColor{
+		Light: lipgloss.ANSIColor(244),
+		Dark:  lipgloss.ANSIColor(251),
+	}, // Same as SecondaryText by default; override via theme.colors.text.mrNumber
+
 	NewContributorIconColor: compat.AdaptiveColor{
 		Light: lipgloss.ANSIColor(77),
 		Dark:  lipgloss.ANSIColor(77),
@@ -197,6 +203,10 @@ func ParseTheme(cfg *config.Config) Theme {
 		DefaultTheme.AuthorText = _shimColor(
 			cfg.Theme.Colors.Inline.Text.Author,
 			DefaultTheme.AuthorText,
+		)
+		DefaultTheme.MrNumberText = _shimColor(
+			cfg.Theme.Colors.Inline.Text.MrNumber,
+			DefaultTheme.MrNumberText,
 		)
 		DefaultTheme.NewContributorIconColor = _shimColor(
 			cfg.Theme.Colors.Inline.Icon.NewContributor,

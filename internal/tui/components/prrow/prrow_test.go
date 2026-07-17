@@ -459,6 +459,10 @@ func TestRenderExtendedTitleAuthorColor(t *testing.T) {
 		Light: lipgloss.Color("#00FF00"),
 		Dark:  lipgloss.Color("#00FF00"),
 	}
+	mrNumberText := compat.AdaptiveColor{
+		Light: lipgloss.Color("#CC241D"),
+		Dark:  lipgloss.Color("#CC241D"),
+	}
 	secondaryText := compat.AdaptiveColor{
 		Light: lipgloss.Color("#111111"),
 		Dark:  lipgloss.Color("#EEEEEE"),
@@ -487,6 +491,7 @@ func TestRenderExtendedTitleAuthorColor(t *testing.T) {
 			SecondaryText:      secondaryText,
 			SelectedBackground: selectedBackground,
 			AuthorText:         authorText,
+			MrNumberText:       mrNumberText,
 		},
 	}
 
@@ -544,6 +549,28 @@ func TestRenderExtendedTitleAuthorColor(t *testing.T) {
 					tt.isSelected,
 					result,
 					oldAuthorRun,
+				)
+			}
+
+			wantNumberRun := baseStyle.Foreground(mrNumberText).Render("#42")
+			if !strings.Contains(result, wantNumberRun) {
+				t.Errorf(
+					"renderExtendedTitle(%v) = %q, want it to contain the MrNumberText-styled number run %q",
+					tt.isSelected,
+					result,
+					wantNumberRun,
+				)
+			}
+
+			// The " by " separator must carry baseStyle so the selected-row
+			// background doesn't drop out between the number and the author.
+			wantSeparatorRun := baseStyle.Render(" by ")
+			if !strings.Contains(result, wantSeparatorRun) {
+				t.Errorf(
+					"renderExtendedTitle(%v) = %q, want the \" by \" separator styled with baseStyle %q",
+					tt.isSelected,
+					result,
+					wantSeparatorRun,
 				)
 			}
 		})

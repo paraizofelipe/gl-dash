@@ -42,7 +42,7 @@ func RenderIssueTitle(
 		if state != "OPEN" {
 			prNumberFg = ctx.Theme.FaintText
 		} else {
-			prNumberFg = ctx.Theme.SecondaryText
+			prNumberFg = ctx.Theme.MrNumberText
 		}
 		prNumber = lipgloss.NewStyle().Foreground(prNumberFg).Render(prNumber)
 		// TODO: hack - see issue https://github.com/charmbracelet/lipgloss/issues/144

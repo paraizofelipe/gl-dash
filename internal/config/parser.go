@@ -267,6 +267,7 @@ type ColorThemeText struct {
 	Error     Color `yaml:"error"                      validate:"omitempty,color"`
 	Actor     Color `yaml:"actor"                      validate:"omitempty,color"`
 	Author    Color `yaml:"author"                     validate:"omitempty,color"`
+	MrNumber  Color `yaml:"mrNumber"                   validate:"omitempty,color"`
 }
 
 type ColorThemeBorder struct {
