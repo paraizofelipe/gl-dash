@@ -153,6 +153,9 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 
 		case key.Matches(msg, keys.PRKeys.WatchChecks):
 			cmd = m.watchChecks()
+
+		case key.Matches(msg, keys.PRKeys.RequestReview):
+			cmd = m.requestReviewSelf()
 		}
 
 	case watchPipelineTickMsg:
@@ -452,6 +455,21 @@ func (m *Model) GetCurrRow() data.RowData {
 	}
 	pr := m.Prs[idx]
 	return &pr
+}
+
+// requestReviewSelf adds the current user as a reviewer of the selected merge
+// request without a prompt, so it shows up under review-requested:@me.
+func (m *Model) requestReviewSelf() tea.Cmd {
+	pr := m.GetCurrRow()
+	if pr == nil || m.Ctx.User == "" {
+		return nil
+	}
+	return tasks.RequestReviewPR(
+		m.Ctx,
+		tasks.SectionIdentifier{Id: m.Id, Type: SectionType},
+		pr,
+		[]string{m.Ctx.User},
+	)
 }
 
 func (m *Model) FetchNextPageSectionRows() []tea.Cmd {

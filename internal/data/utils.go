@@ -18,21 +18,24 @@ type RowData interface {
 }
 
 func GetAuthorRoleIcon(role string, theme theme.Theme) string {
-	// https://docs.github.com/en/graphql/reference/enums#commentauthorassociation
+	// The first group are GitHub's CommentAuthorAssociation values
+	// (https://docs.github.com/en/graphql/reference/enums#commentauthorassociation);
+	// the second are GitLab's project access levels (AccessLevelEnum.stringValue),
+	// mapped onto the same icon set from highest to lowest privilege.
 	switch role {
-	case "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE":
+	case "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE", "GUEST":
 		return lipgloss.NewStyle().
 			Foreground(compat.AdaptiveColor(theme.NewContributorIconColor)).
 			Render(theme.NewContributorIcon)
-	case "COLLABORATOR":
+	case "COLLABORATOR", "DEVELOPER":
 		return lipgloss.NewStyle().
 			Foreground(compat.AdaptiveColor(theme.CollaboratorIconColor)).
 			Render(theme.CollaboratorIcon)
-	case "CONTRIBUTOR":
+	case "CONTRIBUTOR", "REPORTER":
 		return lipgloss.NewStyle().
 			Foreground(compat.AdaptiveColor(theme.ContributorIconColor)).
 			Render(theme.ContributorIcon)
-	case "MEMBER":
+	case "MEMBER", "MAINTAINER":
 		return lipgloss.NewStyle().
 			Foreground(compat.AdaptiveColor(theme.MemberIconColor)).
 			Render(theme.MemberIcon)

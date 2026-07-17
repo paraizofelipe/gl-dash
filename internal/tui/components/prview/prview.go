@@ -102,6 +102,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case cmpcontroller.ModeRequestReview:
+			usernames := fuzzyselect.AllWords(value)
+			if len(usernames) > 0 {
+				return m, tasks.RequestReviewPR(m.ctx, sid, m.pr.Data.Primary, usernames)
+			}
+			return m, nil
+
 		case cmpcontroller.ModeLabel:
 			labels := fuzzyselect.CurrentLabels(value)
 			if len(labels) > 0 || len(m.pr.Data.Primary.Labels.Nodes) > 0 {
@@ -474,9 +481,15 @@ func (m *Model) renderRequestedReviewers() string {
 }
 
 func (m *Model) renderAuthor() string {
-	authorAssociation := m.pr.Data.Primary.AuthorAssociation
-	if authorAssociation == "" {
-		authorAssociation = "unknown role"
+	// The author's role is resolved during enrichment (GitLab project access
+	// level), so prefer it over the list row's empty AuthorAssociation.
+	role := m.pr.Data.Primary.AuthorAssociation
+	if m.pr.Data.IsEnriched && m.pr.Data.Enriched.AuthorAssociation != "" {
+		role = m.pr.Data.Enriched.AuthorAssociation
+	}
+	roleLabel := role
+	if roleLabel == "" {
+		roleLabel = "unknown role"
 	}
 	time := lipgloss.NewStyle().Render(utils.TimeElapsed(m.pr.Data.Primary.CreatedAt))
 	return lipgloss.JoinHorizontal(lipgloss.Top,
@@ -486,9 +499,9 @@ func (m *Model) renderAuthor() string {
 		lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(
 			lipgloss.JoinHorizontal(lipgloss.Top, " ⋅ ", time, " ago", " ⋅ ")),
 		lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(
-			lipgloss.JoinHorizontal(lipgloss.Top, data.GetAuthorRoleIcon(m.pr.Data.Primary.AuthorAssociation,
+			lipgloss.JoinHorizontal(lipgloss.Top, data.GetAuthorRoleIcon(role,
 				m.ctx.Theme),
-				" ", lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(strings.ToLower(authorAssociation))),
+				" ", lipgloss.NewStyle().Foreground(m.ctx.Theme.FaintText).Render(strings.ToLower(roleLabel))),
 		),
 	)
 }
@@ -670,6 +683,38 @@ func (m *Model) SetIsApproving(isApproving bool) tea.Cmd {
 		ConfirmDiscardOnCancel:           true,
 		HideAutocompleteWhenContextEmpty: true,
 	})
+	return cmd
+}
+
+func (m *Model) GetIsRequestingReview() bool {
+	return m.editor.Mode() == cmpcontroller.ModeRequestReview
+}
+
+// SetIsRequestingReview opens the prompt to request review from one or more
+// users. Unlike the quick "review myself" keybinding, it starts empty so the
+// user can pick who to add.
+func (m *Model) SetIsRequestingReview(isRequesting bool) tea.Cmd {
+	if m.pr == nil {
+		return nil
+	}
+
+	if !isRequesting {
+		if m.editor.Mode() == cmpcontroller.ModeRequestReview {
+			m.editor.Exit()
+		}
+		return nil
+	}
+
+	m.editor.SetAutocompleteSource(&fuzzyselect.UserMentionSource{WithAtSymbol: false})
+	cmd := m.editor.Enter(cmpcontroller.EnterOptions{
+		Mode:                             cmpcontroller.ModeRequestReview,
+		Prompt:                           constants.RequestReviewPrompt,
+		InitialValue:                     "",
+		Repo:                             m.repoRef(),
+		EnterFetch:                       cmpcontroller.FetchSilent,
+		HideAutocompleteWhenContextEmpty: false,
+	})
+	m.editor.ShowCompletions()
 	return cmd
 }
 

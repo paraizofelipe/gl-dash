@@ -67,11 +67,11 @@ const (
 	NewContributorIcon = "󰎔" // \udb80\udf94 nf-md-new_box
 
 	// Contributors: everyone who has contributed something back to the project
-	ContributorIcon = "" // \uedc6 nf-fa-user_check
+	ContributorIcon = "󰐠" // U+F0420 nf-md-account_eye (reporter/contributor)
 
 	// Collaborator is a person who isn't explicitly a member of your organization,
 	// but who has Read, Write, or Admin permissions to one or more repositories in your organization.
-	CollaboratorIcon = "" // \uedcf nf-fa-user_shield
+	CollaboratorIcon = "󰖵" // U+F05B5 nf-md-account_hard_hat (developer/collaborator)
 
 	// A member of the organization
 	MemberIcon = "" // \uf42b nf-oct-organization
@@ -89,8 +89,9 @@ const (
 	SearchIcon       = "" // \uf002 nf-fa-search
 
 	// Prompts
-	AssignPrompt   = "Assign users (whitespace-separated)" + Ellipsis
-	UnassignPrompt = "Unassign users (whitespace-separated)" + Ellipsis
+	AssignPrompt        = "Assign users (whitespace-separated)" + Ellipsis
+	UnassignPrompt      = "Unassign users (whitespace-separated)" + Ellipsis
+	RequestReviewPrompt = "Request review from users (whitespace-separated)" + Ellipsis
 	CommentPrompt  = "Leave a comment" + Ellipsis
 	ApprovalPrompt = "Approve with comment" + Ellipsis
 	LabelPrompt    = "Add/remove labels (comma-separated)" + Ellipsis

@@ -26,6 +26,7 @@ const (
 	ModeApprove
 	ModeAssign
 	ModeUnassign
+	ModeRequestReview
 	ModeLabel
 	ModeSearch
 )

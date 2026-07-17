@@ -229,6 +229,25 @@ func AssignPR(
 	)
 }
 
+func RequestReviewPR(
+	ctx *context.ProgramContext,
+	section SectionIdentifier,
+	pr data.RowData,
+	usernames []string,
+) tea.Cmd {
+	prNumber := pr.GetNumber()
+	return runMRAction(
+		ctx, section,
+		buildTaskId("pr_request_review", prNumber),
+		fmt.Sprintf("Requesting review on mr #%d from %s", prNumber, usernames),
+		fmt.Sprintf("Review requested on mr #%d from %s", prNumber, usernames),
+		func() (tea.Msg, error) {
+			err := data.AddMergeRequestReviewers(pr.GetRepoNameWithOwner(), prNumber, usernames)
+			return UpdatePRMsg{PrNumber: prNumber}, err
+		},
+	)
+}
+
 func UnassignPR(
 	ctx *context.ProgramContext,
 	section SectionIdentifier,

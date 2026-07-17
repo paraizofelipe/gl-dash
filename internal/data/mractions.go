@@ -121,6 +121,63 @@ func updateMergeRequestAssignees(
 	return err
 }
 
+func AddMergeRequestReviewers(projectPath string, mrIID int, usernames []string) error {
+	return updateMergeRequestReviewers(projectPath, mrIID, usernames, true)
+}
+
+func RemoveMergeRequestReviewers(projectPath string, mrIID int, usernames []string) error {
+	return updateMergeRequestReviewers(projectPath, mrIID, usernames, false)
+}
+
+func updateMergeRequestReviewers(
+	projectPath string,
+	mrIID int,
+	usernames []string,
+	add bool,
+) error {
+	c, err := resolveRESTClient()
+	if err != nil {
+		return err
+	}
+
+	ids, err := resolveUserIDs(usernames)
+	if err != nil {
+		return err
+	}
+
+	mr, _, err := c.MergeRequests.GetMergeRequest(projectPath, int64(mrIID), nil)
+	if err != nil {
+		return err
+	}
+
+	reviewers := make(map[int64]bool, len(mr.Reviewers))
+	for _, u := range mr.Reviewers {
+		reviewers[u.ID] = true
+	}
+	for _, id := range ids {
+		if add {
+			reviewers[id] = true
+		} else {
+			delete(reviewers, id)
+		}
+	}
+
+	merged := make([]int64, 0, len(reviewers))
+	for id := range reviewers {
+		merged = append(merged, id)
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i] < merged[j] })
+
+	_, _, err = c.MergeRequests.UpdateMergeRequest(
+		projectPath,
+		int64(mrIID),
+		&gitlabapi.UpdateMergeRequestOptions{
+			ReviewerIDs: &merged,
+		},
+	)
+	return err
+}
+
 func resolveUserIDs(usernames []string) ([]int64, error) {
 	c, err := resolveRESTClient()
 	if err != nil {

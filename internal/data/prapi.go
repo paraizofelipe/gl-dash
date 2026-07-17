@@ -925,6 +925,7 @@ type mergeRequestNode struct {
 	TargetBranch        string
 	DetailedMergeStatus string
 	Approved            bool
+	UserNotesCount      int
 	DiffStatsSummary    struct {
 		Additions int
 		Deletions int
@@ -964,6 +965,14 @@ func lastCommitStatusFromHeadPipeline(hp *headPipelineNode) LastCommitStatus {
 
 func (n mergeRequestNode) toPullRequestData(projectPath string) PullRequestData {
 	number, _ := strconv.Atoi(n.Iid)
+	// Cross-project searches (e.g. author:@me with no project:) don't carry a
+	// project path, but the web URL does — derive it so Repository/RepoName is
+	// populated for the row and for custom keybinding templates ({{.RepoName}}).
+	if projectPath == "" {
+		if fullPath, _, err := parseMergeRequestUrl(n.WebUrl); err == nil {
+			projectPath = fullPath
+		}
+	}
 	return PullRequestData{
 		Number:           number,
 		Title:            n.Title,
@@ -985,6 +994,11 @@ func (n mergeRequestNode) toPullRequestData(projectPath string) PullRequestData 
 		Assignees:        assigneesFromNodes(n.Assignees.Nodes),
 		Repository:       repositoryFromProjectPath(projectPath),
 		Commits:          lastCommitStatusFromHeadPipeline(n.HeadPipeline),
+		// GitLab's userNotesCount is the comment-bubble count (all user notes,
+		// system notes excluded). The listing renders Comments.TotalCount +
+		// ReviewThreads.TotalCount, so map it here and leave ReviewThreads at
+		// zero to avoid double-counting the diff-discussion notes it already includes.
+		Comments: Comments{TotalCount: n.UserNotesCount},
 	}
 }
 
@@ -1200,6 +1214,7 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 	for _, n := range nodes {
 		prs = append(prs, n.toPullRequestData(translated.ProjectPath))
 	}
+	populateAuthorRoles(prs, translated.ProjectPath)
 
 	return PullRequestsResponse{
 		Prs:        prs,
@@ -1277,7 +1292,142 @@ func FetchPullRequest(prUrl string) (EnrichedPullRequestData, error) {
 	enriched.Commits = commitsFromNodes(mr.Commits.Nodes)
 	enriched.SuggestedReviewers = nil
 	enriched.Pipeline = fetchPipelineBestEffort(fullPath, iid)
+	enriched.AuthorAssociation = resolveCachedAuthorRole(fullPath, mr.Author.Username)
 	return enriched, nil
+}
+
+// queryAuthorRole resolves the author's access level in the project
+// (Owner/Maintainer/Developer/Reporter/Guest) via GraphQL. GitLab has no
+// per-merge-request "author association" like GitHub, so the project membership
+// access level is the closest equivalent for the author role badge. Returns
+// ("", nil) when the author is not a project member (directly or through an
+// inherited group membership); a non-nil error means the lookup itself failed.
+func queryAuthorRole(fullPath, username string) (string, error) {
+	if username == "" || fullPath == "" {
+		return "", nil
+	}
+	c, err := resolveGraphQLClient()
+	if err != nil {
+		return "", err
+	}
+	var q struct {
+		Project struct {
+			ProjectMembers struct {
+				Nodes []struct {
+					User        struct{ Username string }
+					AccessLevel struct{ StringValue string }
+				}
+			} `graphql:"projectMembers(search: $search, relations: [DIRECT, INHERITED])"`
+		} `graphql:"project(fullPath: $fullPath)"`
+	}
+	variables := map[string]any{
+		"fullPath": graphql.ID(fullPath),
+		"search":   graphql.String(username),
+	}
+	if err := c.QueryNamed(context.Background(), "MergeRequestAuthorRole", &q, variables); err != nil {
+		return "", err
+	}
+	// search is a fuzzy match, so pick the node whose username matches exactly.
+	for _, n := range q.Project.ProjectMembers.Nodes {
+		if strings.EqualFold(n.User.Username, username) {
+			return n.AccessLevel.StringValue, nil
+		}
+	}
+	return "", nil
+}
+
+// fetchAuthorRoleBestEffort resolves the author's project access level, swallowing
+// any error: the badge is cosmetic and must never fail the surrounding fetch.
+func fetchAuthorRoleBestEffort(fullPath, username string) string {
+	role, err := queryAuthorRole(fullPath, username)
+	if err != nil {
+		log.Debug("failed to resolve merge request author role", "err", err)
+		return ""
+	}
+	return role
+}
+
+var (
+	authorRoleCache   = map[string]string{}
+	authorRoleCacheMu sync.RWMutex
+)
+
+func authorRoleCacheKey(fullPath, username string) string {
+	return fullPath + "\x00" + username
+}
+
+// resolveCachedAuthorRole returns the author's project access level, caching
+// successful lookups for the session so repeated list refreshes (and the
+// preview) don't re-query GitLab for the same author. Errors are not cached, so
+// a transient failure is retried on the next refresh.
+func resolveCachedAuthorRole(fullPath, username string) string {
+	if fullPath == "" || username == "" {
+		return ""
+	}
+	key := authorRoleCacheKey(fullPath, username)
+	authorRoleCacheMu.RLock()
+	cached, ok := authorRoleCache[key]
+	authorRoleCacheMu.RUnlock()
+	if ok {
+		return cached
+	}
+	role, err := queryAuthorRole(fullPath, username)
+	if err != nil {
+		return ""
+	}
+	authorRoleCacheMu.Lock()
+	authorRoleCache[key] = role
+	authorRoleCacheMu.Unlock()
+	return role
+}
+
+// clearAuthorRoleCache resets the session role cache. Used by tests for isolation.
+func clearAuthorRoleCache() {
+	authorRoleCacheMu.Lock()
+	authorRoleCache = map[string]string{}
+	authorRoleCacheMu.Unlock()
+}
+
+// populateAuthorRoles fills each merge request author's project role for the
+// listing's author badge, resolving unique authors concurrently and caching the
+// result. It is a no-op for cross-project searches (no project path); authors
+// whose role can't be resolved keep an empty AuthorAssociation so the badge
+// falls back to the neutral icon.
+func populateAuthorRoles(prs []PullRequestData, fullPath string) {
+	if fullPath == "" || len(prs) == 0 {
+		return
+	}
+
+	authors := make(map[string]struct{})
+	for _, pr := range prs {
+		if pr.Author.Login != "" {
+			authors[pr.Author.Login] = struct{}{}
+		}
+	}
+
+	roles := make(map[string]string, len(authors))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for username := range authors {
+		wg.Add(1)
+		go func(username string) {
+			defer wg.Done()
+			role := resolveCachedAuthorRole(fullPath, username)
+			if role == "" {
+				return
+			}
+			mu.Lock()
+			roles[username] = role
+			mu.Unlock()
+		}(username)
+	}
+	wg.Wait()
+
+	for i := range prs {
+		if role, ok := roles[prs[i].Author.Login]; ok {
+			prs[i].AuthorAssociation = role
+		}
+	}
 }
 
 // fetchPipelineBestEffort resolves the merge request's pipeline and jobs via

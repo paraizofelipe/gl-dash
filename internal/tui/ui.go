@@ -419,6 +419,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, keys.PRKeys.Unassign):
 				return m, m.openSidebarForPRInput(m.prView.SetIsUnassigning)
 
+			case key.Matches(msg, keys.PRKeys.AddReviewers):
+				return m, m.openSidebarForPRInput(m.prView.SetIsRequestingReview)
+
 			case key.Matches(msg, keys.PRKeys.Label):
 				return m, m.openSidebarForPRInput(m.prView.SetIsLabeling)
 

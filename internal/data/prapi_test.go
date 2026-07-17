@@ -196,7 +196,7 @@ func TestFetchPullRequests(t *testing.T) {
 	})
 
 	t.Run(
-		"user scoped query maps authored merge requests and leaves repository empty",
+		"user scoped query maps authored merge requests and derives repository from the web URL",
 		func(t *testing.T) {
 			defer SetClient(nil)
 
@@ -225,9 +225,11 @@ func TestFetchPullRequests(t *testing.T) {
 			assert.True(t, pr.IsDraft)
 			assert.Equal(t, "CONFLICTING", pr.Mergeable)
 			assert.Equal(t, "REVIEW_REQUIRED", pr.ReviewDecision)
-			assert.Equal(t, "", pr.Repository.Owner.Login)
-			assert.Equal(t, "", pr.Repository.Name)
-			assert.Equal(t, "", pr.Repository.NameWithOwner)
+			// Cross-project searches carry no project path, so the repository is
+			// recovered from the merge request's web URL.
+			assert.Equal(t, "group", pr.Repository.Owner.Login)
+			assert.Equal(t, "proj", pr.Repository.Name)
+			assert.Equal(t, "group/proj", pr.Repository.NameWithOwner)
 		},
 	)
 
@@ -1706,9 +1708,13 @@ func TestFetchPullRequests_QueriesHeadPipelineStatusOnMergeRequestNode(t *testin
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		body := decodeGraphQLRequestBody(t, r)
-		mu.Lock()
-		capturedBody = body
-		mu.Unlock()
+		// FetchPullRequests also issues author-role queries; capture only the
+		// merge request listing query so the assertions below target it.
+		if !strings.Contains(body.Query, "projectMembers") {
+			mu.Lock()
+			capturedBody = body
+			mu.Unlock()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(singleMergeRequestProjectScopedResponse))
@@ -1724,6 +1730,210 @@ func TestFetchPullRequests_QueriesHeadPipelineStatusOnMergeRequestNode(t *testin
 	defer mu.Unlock()
 	require.NotEmpty(t, capturedBody.Query)
 	assert.Contains(t, capturedBody.Query, "headPipeline{status}")
+}
+
+func TestFetchPullRequests_UserNotesCountPopulatesCommentsTotalCount(t *testing.T) {
+	defer SetClient(nil)
+
+	responseBody := `{"data":{"project":{"mergeRequests":{"nodes":[{
+		"iid":"1","title":"T","state":"opened","draft":false,
+		"author":{"username":"jdoe"},
+		"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+		"webUrl":"https://gitlab.com/group/proj/-/merge_requests/1",
+		"sourceBranch":"x","targetBranch":"main",
+		"detailedMergeStatus":"MERGEABLE","approved":true,
+		"diffStatsSummary":{"additions":0,"deletions":0},
+		"labels":{"nodes":[]},
+		"userNotesCount":4,
+		"headPipeline":null
+	}],"count":1,"pageInfo":{"hasNextPage":false,"startCursor":"","endCursor":""}}}}}`
+
+	mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+	SetClient(mockClient)
+
+	resp, err := FetchPullRequests("project:group/proj", 30, nil)
+	require.NoError(t, err)
+	require.Len(t, resp.Prs, 1)
+
+	// The MR listing comment column reads Comments.TotalCount, so the GitLab
+	// userNotesCount must land there or the column renders a permanent 0.
+	assert.Equal(t, 4, resp.Prs[0].Comments.TotalCount)
+}
+
+func TestFetchAuthorRoleBestEffort_ReturnsExactMatchAccessLevel(t *testing.T) {
+	defer SetClient(nil)
+
+	// search is fuzzy, so the response can include near-matches; only the exact
+	// username match must be returned.
+	responseBody := `{"data":{"project":{"projectMembers":{"nodes":[
+		{"user":{"username":"jdoe.bot"},"accessLevel":{"stringValue":"GUEST"}},
+		{"user":{"username":"jdoe"},"accessLevel":{"stringValue":"MAINTAINER"}}
+	]}}}}`
+	SetClient(newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody)))
+
+	assert.Equal(t, "MAINTAINER", fetchAuthorRoleBestEffort("group/proj", "jdoe"))
+}
+
+func TestFetchAuthorRoleBestEffort_ReturnsEmptyWhenAuthorNotAMember(t *testing.T) {
+	defer SetClient(nil)
+
+	responseBody := `{"data":{"project":{"projectMembers":{"nodes":[]}}}}`
+	SetClient(newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody)))
+
+	assert.Equal(t, "", fetchAuthorRoleBestEffort("group/proj", "jdoe"))
+}
+
+func TestFetchAuthorRoleBestEffort_EmptyUsernameSkipsRequest(t *testing.T) {
+	defer SetClient(nil)
+
+	called := false
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}
+	SetClient(newMockGraphQLClient(t, handler))
+
+	assert.Equal(t, "", fetchAuthorRoleBestEffort("group/proj", ""))
+	assert.False(t, called, "no request should be made for an empty username")
+}
+
+func TestFetchAuthorRoleBestEffort_QueryRequestsProjectMembersWithRelations(t *testing.T) {
+	defer SetClient(nil)
+
+	var capturedBody graphQLRequestBody
+	var mu sync.Mutex
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLRequestBody(t, r)
+		mu.Lock()
+		capturedBody = body
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"project":{"projectMembers":{"nodes":[]}}}}`))
+	}
+	SetClient(newMockGraphQLClient(t, handler))
+
+	_ = fetchAuthorRoleBestEffort("group/proj", "jdoe")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, capturedBody.Query)
+	// Inherited group members must be included, and the access level string is
+	// what the role badge renders.
+	assert.Contains(t, capturedBody.Query, "projectMembers(search: $search, relations: [DIRECT, INHERITED])")
+	assert.Contains(t, capturedBody.Query, "accessLevel{stringValue}")
+}
+
+func TestToPullRequestData_DerivesRepoFromWebURLWhenProjectPathEmpty(t *testing.T) {
+	n := mergeRequestNode{
+		Iid:    "7",
+		WebUrl: "https://gitlab.example.com/group/sub/proj/-/merge_requests/7",
+	}
+
+	// Cross-project search (e.g. author:@me): no project path is passed, so the
+	// repository must be recovered from the web URL — otherwise {{.RepoName}}
+	// in custom keybindings resolves to empty.
+	got := n.toPullRequestData("")
+	assert.Equal(t, "group/sub/proj", got.GetRepoNameWithOwner())
+
+	// Project-scoped search: the explicit path is honored.
+	got = n.toPullRequestData("group/sub/proj")
+	assert.Equal(t, "group/sub/proj", got.GetRepoNameWithOwner())
+}
+
+func TestPopulateAuthorRoles_ResolvesUniqueAuthorsAndCaches(t *testing.T) {
+	defer SetClient(nil)
+	clearAuthorRoleCache()
+	defer clearAuthorRoleCache()
+
+	var mu sync.Mutex
+	count := 0
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLRequestBody(t, r)
+		mu.Lock()
+		count++
+		mu.Unlock()
+		user, _ := body.Variables["search"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w,
+			`{"data":{"project":{"projectMembers":{"nodes":[{"user":{"username":%q},"accessLevel":{"stringValue":"DEVELOPER"}}]}}}}`,
+			user)
+	}
+	SetClient(newMockGraphQLClient(t, handler))
+
+	prs := []PullRequestData{
+		{Author: struct{ Login string }{Login: "jdoe"}},
+		{Author: struct{ Login string }{Login: "jdoe"}}, // same author -> single lookup
+		{Author: struct{ Login string }{Login: "asmith"}},
+	}
+	populateAuthorRoles(prs, "group/proj")
+
+	assert.Equal(t, "DEVELOPER", prs[0].AuthorAssociation)
+	assert.Equal(t, "DEVELOPER", prs[1].AuthorAssociation)
+	assert.Equal(t, "DEVELOPER", prs[2].AuthorAssociation)
+	mu.Lock()
+	assert.Equal(t, 2, count, "one members lookup per unique author")
+	mu.Unlock()
+
+	// A second pass is fully served from the session cache.
+	populateAuthorRoles(prs, "group/proj")
+	mu.Lock()
+	assert.Equal(t, 2, count, "cached authors are not re-queried")
+	mu.Unlock()
+}
+
+func TestPopulateAuthorRoles_NoopForCrossProjectSearch(t *testing.T) {
+	defer SetClient(nil)
+	clearAuthorRoleCache()
+	defer clearAuthorRoleCache()
+
+	called := false
+	SetClient(newMockGraphQLClient(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+
+	prs := []PullRequestData{{Author: struct{ Login string }{Login: "jdoe"}}}
+	populateAuthorRoles(prs, "")
+
+	assert.False(t, called, "cross-project searches must not query members")
+	assert.Equal(t, "", prs[0].AuthorAssociation)
+}
+
+func TestFetchPullRequests_QueriesUserNotesCountOnMergeRequestNode(t *testing.T) {
+	defer SetClient(nil)
+
+	var capturedBody graphQLRequestBody
+	var mu sync.Mutex
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body := decodeGraphQLRequestBody(t, r)
+		// FetchPullRequests also issues author-role queries; capture only the
+		// merge request listing query so the assertions below target it.
+		if !strings.Contains(body.Query, "projectMembers") {
+			mu.Lock()
+			capturedBody = body
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(singleMergeRequestProjectScopedResponse))
+	}
+
+	mockClient := newMockGraphQLClient(t, handler)
+	SetClient(mockClient)
+
+	_, err := FetchPullRequests("project:group/proj", 30, nil)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, capturedBody.Query)
+	assert.Contains(t, capturedBody.Query, "userNotesCount")
 }
 
 func TestSetRESTClient(t *testing.T) {
@@ -2967,9 +3177,13 @@ func TestFetchPullRequest_QueryDeclaresDiscussionsApprovedByAndReviewers(t *test
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		body := decodeGraphQLRequestBody(t, r)
-		mu.Lock()
-		capturedBody = body
-		mu.Unlock()
+		// FetchPullRequest also issues a separate author-role query; capture
+		// only the merge request query so the assertions below target it.
+		if !strings.Contains(body.Query, "projectMembers") {
+			mu.Lock()
+			capturedBody = body
+			mu.Unlock()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(responseBody))
@@ -3000,9 +3214,13 @@ func TestFetchPullRequests_ListingQueryDoesNotDeclareDiscussionsApprovedByOrRevi
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		body := decodeGraphQLRequestBody(t, r)
-		mu.Lock()
-		capturedBody = body
-		mu.Unlock()
+		// FetchPullRequests also issues author-role queries; capture only the
+		// merge request listing query so the assertions below target it.
+		if !strings.Contains(body.Query, "projectMembers") {
+			mu.Lock()
+			capturedBody = body
+			mu.Unlock()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(singleMergeRequestProjectScopedResponse))
