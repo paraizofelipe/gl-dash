@@ -200,6 +200,8 @@ func GenerateActivityDescription(reason, subjectType, actor string) string {
 		return "You were mentioned"
 	case data.ReasonBuildFailed:
 		return "Pipeline failed"
+	case data.ReasonUnmergeable:
+		return "This merge request can't be merged"
 	case data.ReasonMarked:
 		return "Manually marked as a to-do"
 	case data.ReasonApprovalRequired:

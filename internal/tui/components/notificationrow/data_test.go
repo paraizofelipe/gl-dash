@@ -1118,6 +1118,13 @@ func TestGenerateActivityDescriptionKnownActions(t *testing.T) {
 			actor:       "",
 			expected:    "You were directly addressed",
 		},
+		{
+			name:        "unmergeable merge request",
+			reason:      "unmergeable",
+			subjectType: "MergeRequest",
+			actor:       "gitlabuser",
+			expected:    "This merge request can't be merged",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1222,7 +1229,7 @@ func TestDataMethodsNoPanicOnUnknownGitLabValues(t *testing.T) {
 		reason      string
 		subjectType string
 	}{
-		{name: "unknown GitLab reason", reason: "unmergeable", subjectType: "MergeRequest"},
+		{name: "unknown GitLab reason", reason: "some_future_action", subjectType: "MergeRequest"},
 		{name: "unknown namespaced value", reason: "AlertManagement::Alert", subjectType: "Issue"},
 		{name: "empty reason", reason: "", subjectType: "Issue"},
 	}

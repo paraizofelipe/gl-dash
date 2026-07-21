@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,52 +50,71 @@ func parseRepoFilters(search string) []string {
 // NotificationFilters holds parsed notification filters
 type NotificationFilters struct {
 	RepoFilters       []string
-	ReasonFilters     []string // Notification reasons to filter by (e.g., "author", "mention")
+	ReasonFilters     []string // Notification reasons to filter by (GitLab todo action names)
 	ReadState         data.NotificationReadState
-	IsDone            bool // If true, user asked for is:done which is not retrievable
 	ExplicitUnread    bool // If true, user explicitly typed "is:unread" (excludes bookmarked+read)
 	IncludeBookmarked bool // If true, include bookmarked items even if read (default view)
 }
 
-// parseReasonFilters extracts reason:value patterns from a search string
-// Handles "reason:participating" as a meta-filter and normalizes hyphenated names
+// parseReasonFilters extracts reason:value patterns from a search string,
+// normalizing each token to a GitLab todo action name (Todo.ActionName). It
+// also expands the "participating" meta-filter. The values must line up with
+// what GitLab actually emits (assigned, mentioned, directly_addressed,
+// review_requested, approval_required, build_failed, marked, unmergeable),
+// NOT the old GitHub reason vocabulary — otherwise the client-side reason
+// filter never matches anything.
 func parseReasonFilters(search string) []string {
 	matches := reasonFilterRegex.FindAllStringSubmatch(search, -1)
 	reasons := make([]string, 0, len(matches))
 	for _, match := range matches {
-		if len(match) > 1 {
-			reason := match[1]
-			// Expand "participating" meta-filter to multiple reasons
-			if reason == "participating" {
-				reasons = append(
-					reasons,
-					data.ReasonAuthor,
-					data.ReasonComment,
-					data.ReasonMention,
-					data.ReasonReviewRequested,
-					data.ReasonAssign,
-					data.ReasonStateChange,
-				)
-			} else {
-				// Normalize hyphenated names to match GitHub API values
-				switch reason {
-				case "review-requested":
-					reasons = append(reasons, data.ReasonReviewRequested)
-				case "team-mention":
-					reasons = append(reasons, data.ReasonTeamMention)
-				case "ci-activity":
-					reasons = append(reasons, data.ReasonCIActivity)
-				case "security-alert":
-					reasons = append(reasons, data.ReasonSecurityAlert)
-				case "state-change":
-					reasons = append(reasons, data.ReasonStateChange)
-				default:
-					reasons = append(reasons, reason)
-				}
-			}
+		if len(match) <= 1 {
+			continue
 		}
+		reason := match[1]
+		// Expand "participating" to the GitLab actions that mean "you're
+		// directly involved" (there is no single participating filter).
+		if reason == "participating" {
+			reasons = append(
+				reasons,
+				data.ReasonAssigned,
+				data.ReasonMentioned,
+				data.ReasonDirectlyAddressed,
+				data.ReasonReviewRequested,
+				data.ReasonApprovalRequired,
+				data.ReasonMarked,
+			)
+			continue
+		}
+		reasons = append(reasons, normalizeGitLabReason(reason))
 	}
 	return reasons
+}
+
+// normalizeGitLabReason maps a user-typed reason token onto a GitLab todo
+// action name. Common singular/plural and hyphenated spellings are aliased to
+// the exact value GitLab returns; anything unrecognized has hyphens turned
+// into underscores (GitLab uses snake_case) and is otherwise passed through.
+func normalizeGitLabReason(reason string) string {
+	switch reason {
+	case "assign", "assigned", "assignee":
+		return data.ReasonAssigned
+	case "mention", "mentioned":
+		return data.ReasonMentioned
+	case "directly-addressed", "directly_addressed":
+		return data.ReasonDirectlyAddressed
+	case "review-requested", "review_requested", "review":
+		return data.ReasonReviewRequested
+	case "approval-required", "approval_required", "approval":
+		return data.ReasonApprovalRequired
+	case "build-failed", "build_failed", "pipeline":
+		return data.ReasonBuildFailed
+	case "marked":
+		return data.ReasonMarked
+	case "unmergeable":
+		return data.ReasonUnmergeable
+	default:
+		return strings.ReplaceAll(reason, "-", "_")
+	}
 }
 
 // parseNotificationFilters extracts all notification filters from search string.
@@ -109,7 +129,6 @@ func parseNotificationFilters(search string, includeRead bool) NotificationFilte
 		RepoFilters:       parseRepoFilters(search),
 		ReasonFilters:     parseReasonFilters(search),
 		ReadState:         defaultReadState,
-		IsDone:            false,
 		ExplicitUnread:    false,
 		IncludeBookmarked: !includeRead, // Only auto-include bookmarks when filtering to unread
 	}
@@ -135,8 +154,11 @@ func parseNotificationFilters(search string, includeRead bool) NotificationFilte
 		}
 	}
 
+	// On GitLab a "done" todo IS the read state — there is no separate
+	// retrievable "done" bucket like on GitHub — so is:done is an alias for
+	// is:read rather than an unretrievable filter.
 	if hasDone {
-		filters.IsDone = true
+		hasRead = true
 	}
 
 	if hasAll || (hasUnread && hasRead) {
@@ -567,24 +589,6 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 
 	// Parse filters from search value (includes repo filter if smartFilteringAtLaunch is enabled)
 	filters := parseNotificationFilters(m.GetSearchValue(), m.Ctx.Config.IncludeReadNotifications)
-
-	// Handle is:done filter - these notifications cannot be retrieved
-	if filters.IsDone {
-		m.Notifications = []notificationrow.Data{}
-		m.TotalCount = 0
-		m.SetIsLoading(false)
-		m.Table.SetRows(m.BuildRows())
-		m.UpdateTotalItemsCount(0)
-		// Return a message that will be shown to the user
-		return []tea.Cmd{func() tea.Msg {
-			return constants.TaskFinishedMsg{
-				SectionId:   m.Id,
-				SectionType: m.Type,
-				TaskId:      "done_filter",
-				Err:         fmt.Errorf("done notifications cannot be retrieved"),
-			}
-		}}
-	}
 
 	taskId := fmt.Sprintf("fetching_notifications_%d_%s", m.Id, time.Now().String())
 	m.LastFetchTaskId = taskId

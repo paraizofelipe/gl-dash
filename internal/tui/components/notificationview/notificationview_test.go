@@ -397,6 +397,7 @@ func TestFormatReason(t *testing.T) {
 			expected: "Approval required",
 		},
 		{name: "directly_addressed", reason: "directly_addressed", expected: "Directly addressed"},
+		{name: "unmergeable", reason: "unmergeable", expected: "Cannot be merged"},
 		{
 			name:     "unknown reason echoes the raw value",
 			reason:   "some_unknown_reason",
@@ -437,7 +438,7 @@ func TestNoPanicOnUnknownGitLabValues(t *testing.T) {
 		name   string
 		reason string
 	}{
-		{name: "unknown GitLab reason", reason: "unmergeable"},
+		{name: "unknown GitLab reason", reason: "some_future_action"},
 		{name: "unknown namespaced value", reason: "AlertManagement::Alert"},
 		{name: "empty reason", reason: ""},
 	}

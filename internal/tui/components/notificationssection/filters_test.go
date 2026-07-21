@@ -11,7 +11,6 @@ func TestParseNotificationFilters(t *testing.T) {
 		name                  string
 		search                string
 		wantReadState         data.NotificationReadState
-		wantIsDone            bool
 		wantExplicitUnread    bool
 		wantIncludeBookmarked bool
 		wantRepoCount         int
@@ -20,7 +19,6 @@ func TestParseNotificationFilters(t *testing.T) {
 			name:                  "empty search defaults to unread with bookmarks",
 			search:                "",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: true,
 			wantRepoCount:         0,
@@ -29,7 +27,6 @@ func TestParseNotificationFilters(t *testing.T) {
 			name:                  "explicit is:unread excludes bookmarks",
 			search:                "is:unread",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    true,
 			wantIncludeBookmarked: false,
 			wantRepoCount:         0,
@@ -38,7 +35,6 @@ func TestParseNotificationFilters(t *testing.T) {
 			name:                  "is:read excludes bookmarks",
 			search:                "is:read",
 			wantReadState:         data.NotificationStateRead,
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: false,
 			wantRepoCount:         0,
@@ -47,25 +43,22 @@ func TestParseNotificationFilters(t *testing.T) {
 			name:                  "is:all excludes bookmarks",
 			search:                "is:all",
 			wantReadState:         data.NotificationStateAll,
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: false,
 			wantRepoCount:         0,
 		},
 		{
-			name:                  "is:done sets IsDone flag",
+			name:                  "is:done is an alias for is:read on GitLab",
 			search:                "is:done",
-			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            true,
+			wantReadState:         data.NotificationStateRead,
 			wantExplicitUnread:    false,
-			wantIncludeBookmarked: true,
+			wantIncludeBookmarked: false,
 			wantRepoCount:         0,
 		},
 		{
 			name:                  "is:unread and is:read together becomes is:all",
 			search:                "is:unread is:read",
 			wantReadState:         data.NotificationStateAll,
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: false,
 			wantRepoCount:         0,
@@ -74,7 +67,6 @@ func TestParseNotificationFilters(t *testing.T) {
 			name:                  "repo filter is extracted",
 			search:                "repo:owner/repo",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: true,
 			wantRepoCount:         1,
@@ -83,7 +75,6 @@ func TestParseNotificationFilters(t *testing.T) {
 			name:                  "multiple repo filters",
 			search:                "repo:owner/repo1 repo:owner/repo2",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: true,
 			wantRepoCount:         2,
@@ -92,7 +83,6 @@ func TestParseNotificationFilters(t *testing.T) {
 			name:                  "combined filters",
 			search:                "repo:owner/repo is:unread",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    true,
 			wantIncludeBookmarked: false,
 			wantRepoCount:         1,
@@ -101,7 +91,6 @@ func TestParseNotificationFilters(t *testing.T) {
 			name:                  "random text preserves defaults",
 			search:                "some random search text",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: true,
 			wantRepoCount:         0,
@@ -114,9 +103,6 @@ func TestParseNotificationFilters(t *testing.T) {
 
 			if filters.ReadState != tt.wantReadState {
 				t.Errorf("ReadState = %v, want %v", filters.ReadState, tt.wantReadState)
-			}
-			if filters.IsDone != tt.wantIsDone {
-				t.Errorf("IsDone = %v, want %v", filters.IsDone, tt.wantIsDone)
 			}
 			if filters.ExplicitUnread != tt.wantExplicitUnread {
 				t.Errorf(
@@ -160,20 +146,20 @@ func TestParseReasonFilters(t *testing.T) {
 			expected: []string{data.ReasonAuthor},
 		},
 		{
-			name:     "multiple reason filters",
+			name:     "reason:mention normalizes to the GitLab mentioned action",
 			search:   "reason:author reason:mention",
-			expected: []string{data.ReasonAuthor, data.ReasonMention},
+			expected: []string{data.ReasonAuthor, data.ReasonMentioned},
 		},
 		{
-			name:   "reason:participating expands to multiple reasons",
+			name:   "reason:participating expands to the GitLab involvement actions",
 			search: "reason:participating",
 			expected: []string{
-				data.ReasonAuthor,
-				data.ReasonComment,
-				data.ReasonMention,
+				data.ReasonAssigned,
+				data.ReasonMentioned,
+				data.ReasonDirectlyAddressed,
 				data.ReasonReviewRequested,
-				data.ReasonAssign,
-				data.ReasonStateChange,
+				data.ReasonApprovalRequired,
+				data.ReasonMarked,
 			},
 		},
 		{
@@ -363,7 +349,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 		name                  string
 		search                string
 		wantReadState         data.NotificationReadState
-		wantIsDone            bool
 		wantExplicitUnread    bool
 		wantIncludeBookmarked bool
 	}{
@@ -371,7 +356,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 			name:                  "whitespace only preserves defaults",
 			search:                "   ",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: true,
 		},
@@ -379,7 +363,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 			name:                  "mixed case is:UNREAD not recognized (case sensitive)",
 			search:                "is:UNREAD",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    false, // Not recognized due to case
 			wantIncludeBookmarked: true,  // Default when not recognized
 		},
@@ -387,7 +370,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 			name:                  "mixed case is:Read not recognized (case sensitive)",
 			search:                "is:Read",
 			wantReadState:         data.NotificationStateUnread, // Default when not recognized
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: true, // Default when not recognized
 		},
@@ -395,7 +377,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 			name:                  "mixed case is:ALL not recognized (case sensitive)",
 			search:                "is:ALL",
 			wantReadState:         data.NotificationStateUnread, // Default when not recognized
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: true, // Default when not recognized
 		},
@@ -403,7 +384,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 			name:                  "mixed case is:Done not recognized (case sensitive)",
 			search:                "is:Done",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false, // Not recognized due to case
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: true,
 		},
@@ -411,7 +391,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 			name:                  "multiple spaces between filters",
 			search:                "is:unread    repo:owner/repo",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    true,
 			wantIncludeBookmarked: false,
 		},
@@ -419,7 +398,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 			name:                  "filter at end of string",
 			search:                "some text is:read",
 			wantReadState:         data.NotificationStateRead,
-			wantIsDone:            false,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: false,
 		},
@@ -427,7 +405,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 			name:                  "is:done with is:all",
 			search:                "is:done is:all",
 			wantReadState:         data.NotificationStateAll,
-			wantIsDone:            true,
 			wantExplicitUnread:    false,
 			wantIncludeBookmarked: false,
 		},
@@ -435,7 +412,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 			name:                  "duplicate is:unread",
 			search:                "is:unread is:unread",
 			wantReadState:         data.NotificationStateUnread,
-			wantIsDone:            false,
 			wantExplicitUnread:    true,
 			wantIncludeBookmarked: false,
 		},
@@ -447,9 +423,6 @@ func TestParseNotificationFiltersEdgeCases(t *testing.T) {
 
 			if filters.ReadState != tt.wantReadState {
 				t.Errorf("ReadState = %v, want %v", filters.ReadState, tt.wantReadState)
-			}
-			if filters.IsDone != tt.wantIsDone {
-				t.Errorf("IsDone = %v, want %v", filters.IsDone, tt.wantIsDone)
 			}
 			if filters.ExplicitUnread != tt.wantExplicitUnread {
 				t.Errorf(
@@ -484,12 +457,12 @@ func TestParseReasonFiltersEdgeCases(t *testing.T) {
 			name:   "reason:participating with other filters",
 			search: "is:unread reason:participating repo:owner/repo",
 			expected: []string{
-				data.ReasonAuthor,
-				data.ReasonComment,
-				data.ReasonMention,
+				data.ReasonAssigned,
+				data.ReasonMentioned,
+				data.ReasonDirectlyAddressed,
 				data.ReasonReviewRequested,
-				data.ReasonAssign,
-				data.ReasonStateChange,
+				data.ReasonApprovalRequired,
+				data.ReasonMarked,
 			},
 		},
 		{

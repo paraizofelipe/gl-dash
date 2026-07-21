@@ -44,6 +44,7 @@ const (
 	ReasonMarked            = "marked"
 	ReasonApprovalRequired  = "approval_required"
 	ReasonDirectlyAddressed = "directly_addressed"
+	ReasonUnmergeable       = "unmergeable"
 )
 
 type NotificationSubject struct {
@@ -154,27 +155,19 @@ func FetchNotifications(
 		fmt.Sscanf(pageInfo.EndCursor, "%d", &page)
 	}
 
-	opt := &gitlabapi.ListTodosOptions{
-		ListOptions: gitlabapi.ListOptions{
-			PerPage: int64(limit),
-			Page:    int64(page),
-		},
-	}
+	// Map the read-state filter onto the GitLab todo states to query. GitLab's
+	// GET /todos returns ONLY pending todos when no state filter is applied
+	// (not pending+done), so "all" cannot be expressed as a single stateless
+	// call — it must explicitly union pending and done. Querying with no state
+	// at all would silently hide every done/read todo.
+	var states []string
 	switch readState {
-	case NotificationStateUnread:
-		opt.State = gitlabapi.Ptr("pending")
 	case NotificationStateRead:
-		opt.State = gitlabapi.Ptr("done")
+		states = []string{"done"}
 	case NotificationStateAll:
-		// No state filter. Note: GitLab's GET /todos returns only pending
-		// todos when no state filter is applied (not both), a real
-		// asymmetry versus the old GitHub all=true behavior.
-	}
-
-	log.Debug("Fetching notifications", "limit", limit, "page", page, "readState", readState)
-	items, resp, err := todos.ListTodos(opt)
-	if err != nil {
-		return NotificationsResponse{}, err
+		states = []string{"pending", "done"}
+	default: // NotificationStateUnread
+		states = []string{"pending"}
 	}
 
 	// ListTodosOptions.ProjectID filters by numeric project ID, not by
@@ -184,19 +177,46 @@ func FetchNotifications(
 		repoFilterSet[r] = true
 	}
 
-	notifications := make([]NotificationData, 0, len(items))
-	for _, item := range items {
-		n := notificationFromTodo(item)
-		if len(repoFilterSet) > 0 && !repoFilterSet[n.Repository.FullName] {
-			continue
+	log.Debug(
+		"Fetching notifications",
+		"limit", limit,
+		"page", page,
+		"readState", readState,
+		"states", states,
+	)
+
+	notifications := make([]NotificationData, 0, limit)
+	hasNextPage := false
+	for _, state := range states {
+		opt := &gitlabapi.ListTodosOptions{
+			ListOptions: gitlabapi.ListOptions{
+				PerPage: int64(limit),
+				Page:    int64(page),
+			},
+			State: gitlabapi.Ptr(state),
 		}
-		notifications = append(notifications, n)
+		items, resp, err := todos.ListTodos(opt)
+		if err != nil {
+			return NotificationsResponse{}, err
+		}
+		for _, item := range items {
+			n := notificationFromTodo(item)
+			if len(repoFilterSet) > 0 && !repoFilterSet[n.Repository.FullName] {
+				continue
+			}
+			notifications = append(notifications, n)
+		}
+		if resp != nil && resp.NextPage != 0 {
+			hasNextPage = true
+		}
 	}
 
-	hasNextPage := resp != nil && resp.NextPage != 0
+	// GitLab paginates each state as page+1; when unioning states we advance
+	// both streams together by page number, so the next cursor is page+1 as
+	// long as either stream still has more pages.
 	nextPage := ""
 	if hasNextPage {
-		nextPage = fmt.Sprintf("%d", resp.NextPage)
+		nextPage = fmt.Sprintf("%d", page+1)
 	}
 
 	log.Info(

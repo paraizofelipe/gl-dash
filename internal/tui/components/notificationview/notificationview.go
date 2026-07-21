@@ -207,18 +207,6 @@ func (m Model) View() string {
 	s.WriteString(sectionStyle.Render(repoRow))
 	s.WriteString("\n")
 
-	visibility := "Public"
-	if notification.Repository.Private {
-		visibility = "Private"
-	}
-	visibilityRow := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		labelStyle.Render("Visibility"),
-		valueStyle.Render(visibility),
-	)
-	s.WriteString(sectionStyle.Render(visibilityRow))
-	s.WriteString("\n")
-
 	reasonRow := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		labelStyle.Render("Reason"),
@@ -239,26 +227,15 @@ func (m Model) View() string {
 	s.WriteString(sectionStyle.Render(statusRow))
 	s.WriteString("\n")
 
-	// Updated at
-	updatedRow := lipgloss.JoinHorizontal(
+	// Created at. GitLab's Todo exposes only created_at (no updated_at and no
+	// last_read_at), so this is the todo's creation time — labeled honestly as
+	// "Created" rather than "Updated"/"Last Read", which would be fabricated.
+	createdRow := lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		labelStyle.Render("Updated"),
+		labelStyle.Render("Created"),
 		valueStyle.Render(notification.UpdatedAt.Local().Format("Jan 2, 2006 3:04 PM")),
 	)
-	s.WriteString(sectionStyle.Render(updatedRow))
-	s.WriteString("\n")
-
-	// Last read at
-	lastReadValue := "Never"
-	if notification.LastReadAt != nil {
-		lastReadValue = notification.LastReadAt.Local().Format("Jan 2, 2006 3:04 PM")
-	}
-	lastReadRow := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		labelStyle.Render("Last Read"),
-		valueStyle.Render(lastReadValue),
-	)
-	s.WriteString(sectionStyle.Render(lastReadRow))
+	s.WriteString(sectionStyle.Render(createdRow))
 	s.WriteString("\n")
 
 	if notification.Subject.LatestCommentUrl != "" {
@@ -342,6 +319,8 @@ func formatReason(reason string) string {
 		return "Approval required"
 	case data.ReasonDirectlyAddressed:
 		return "Directly addressed"
+	case data.ReasonUnmergeable:
+		return "Cannot be merged"
 	default:
 		return reason
 	}

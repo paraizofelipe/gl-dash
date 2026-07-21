@@ -230,24 +230,68 @@ func TestFetchNotifications(t *testing.T) {
 		assert.Equal(t, "done", capturedQuery.Get("state"))
 	})
 
-	t.Run("all state omits the state query parameter", func(t *testing.T) {
-		defer SetRESTClient(nil)
-		isolateGitHubAuthEnv(t)
+	t.Run(
+		"all state unions pending and done and merges both result sets",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+			isolateGitHubAuthEnv(t)
 
-		var capturedQuery url.Values
-		mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
-			capturedQuery = r.URL.Query()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`[]`))
-		})
-		SetRESTClient(mockClient)
+			var capturedStates []string
+			mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				state := r.URL.Query().Get("state")
+				capturedStates = append(capturedStates, state)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				switch state {
+				case "pending":
+					_, _ = w.Write(mustMarshalTodos(t, []*gitlabapi.Todo{
+						{ID: 1, State: "pending"},
+					}))
+				case "done":
+					_, _ = w.Write(mustMarshalTodos(t, []*gitlabapi.Todo{
+						{ID: 2, State: "done"},
+					}))
+				default:
+					_, _ = w.Write([]byte(`[]`))
+				}
+			})
+			SetRESTClient(mockClient)
 
-		_, err := FetchNotifications(20, nil, NotificationStateAll, nil)
-		require.NoError(t, err)
-		require.NotNil(t, capturedQuery)
-		assert.Empty(t, capturedQuery.Get("state"))
-	})
+			resp, err := FetchNotifications(20, nil, NotificationStateAll, nil)
+			require.NoError(t, err)
+
+			// GitLab's stateless GET /todos returns only pending todos, so "all"
+			// must query both states explicitly and merge them.
+			assert.ElementsMatch(t, []string{"pending", "done"}, capturedStates)
+			require.Len(t, resp.Notifications, 2)
+			ids := []string{resp.Notifications[0].Id, resp.Notifications[1].Id}
+			assert.ElementsMatch(t, []string{"1", "2"}, ids)
+		},
+	)
+
+	t.Run(
+		"all state reports has next page when either stream has more pages",
+		func(t *testing.T) {
+			defer SetRESTClient(nil)
+			isolateGitHubAuthEnv(t)
+
+			mockClient := newMockRESTClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				// Only the done stream advertises a further page.
+				if r.URL.Query().Get("state") == "done" {
+					w.Header().Set("X-Next-Page", "2")
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+			})
+			SetRESTClient(mockClient)
+
+			resp, err := FetchNotifications(20, nil, NotificationStateAll, nil)
+			require.NoError(t, err)
+			assert.True(t, resp.PageInfo.HasNextPage)
+			assert.Equal(t, "2", resp.PageInfo.EndCursor)
+		},
+	)
 
 	t.Run(
 		"repo filters keep only todos whose project path with namespace matches",
