@@ -2,7 +2,7 @@
 set -eu
 
 WORKSPACE_LABEL="code-review"
-SLEEP_SECONDS="${HERDR_MR_REVIEW_SLEEP:-1}"
+SLEEP_SECONDS="${HERDR_MR_REVIEW_SLEEP:-2}"
 
 die() { echo "herdr-mr-review: $*" >&2; exit 1; }
 
@@ -39,4 +39,16 @@ pane=$(herdr tab create --workspace "$ws" --label "$tab_label" --cwd "$repo_path
 [ -n "$pane" ] && [ "$pane" != "null" ] || die "falha ao criar a tab $tab_label"
 
 sleep "$SLEEP_SECONDS"
+# O shell de login (oh-my-zsh, no modo default) exibe um prompt de auto-update
+# "[oh-my-zsh] Would you like to update? [Y/n]" na inicialização que lê UM
+# caractere. Era ele quem engolia o 'c' de "claude" (chegava "laude ..."), pois
+# o primeiro caractere digitado virava a resposta do prompt. Saneamos a linha
+# antes do comando real, de forma robusta esteja o prompt presente ou não:
+#   n       -> responde "não" ao prompt de update, se ele existir
+#   ctrl+u  -> limpa a linha (descarta o 'n' caso não houvesse prompt)
+#   Enter   -> garante um prompt limpo para receber o comando
+herdr pane send-keys "$pane" n >/dev/null 2>&1 || true
+herdr pane send-keys "$pane" ctrl+u >/dev/null 2>&1 || true
+herdr pane send-keys "$pane" Enter >/dev/null 2>&1 || true
+sleep 1
 herdr pane run "$pane" "claude \"/mr-review $pr_number\" --dangerously-skip-permissions" >/dev/null
