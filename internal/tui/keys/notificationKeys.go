@@ -38,8 +38,8 @@ var NotificationKeys = NotificationKeyMap{
 		key.WithHelp("D", "mark as done"),
 	),
 	MarkAllAsDone: key.NewBinding(
-		key.WithKeys("alt+d"),
-		key.WithHelp("Alt+d", "mark all as done"),
+		key.WithKeys("ctrl+d"),
+		key.WithHelp("Ctrl+d", "mark all as done"),
 	),
 	MarkAsRead: key.NewBinding(
 		key.WithKeys("m"),
