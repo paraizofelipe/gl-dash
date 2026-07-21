@@ -81,6 +81,18 @@ func (options NewSectionOptions) GetConfigFiltersWithCurrentRemoteAdded(
 	return fmt.Sprintf("project:%s/%s %s", ctx.GHRepo.Owner, ctx.GHRepo.Name, searchValue)
 }
 
+// searchPrefixForType returns the non-editable "is:<type>" label rendered at
+// the start of a section's search bar. It is purely cosmetic (never part of the
+// query sent to GitLab). The merge request section keeps its internal type
+// "pr" for routing/config/message identity, but is displayed as "is:mr" since
+// this dashboard targets GitLab merge requests, not GitHub pull requests.
+func searchPrefixForType(sectionType string) string {
+	if sectionType == "pr" {
+		return "is:mr"
+	}
+	return fmt.Sprintf("is:%s", sectionType)
+}
+
 func NewModel(
 	ctx *context.ProgramContext,
 	options NewSectionOptions,
@@ -106,7 +118,7 @@ func NewModel(
 		SingularForm: options.Singular,
 		PluralForm:   options.Plural,
 		SearchBar: search.NewModel(ctx, search.SearchOptions{
-			Prefix:       fmt.Sprintf("is:%s", options.Type),
+			Prefix:       searchPrefixForType(options.Type),
 			InitialValue: filters,
 		}),
 		SearchValue:               filters,
