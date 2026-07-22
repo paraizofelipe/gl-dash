@@ -1,6 +1,9 @@
 package data
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 type TranslatedQuery struct {
 	ProjectPath       string
@@ -11,9 +14,16 @@ type TranslatedQuery struct {
 	ReviewerUsername  string
 	Labels            []string
 	SourceBranch      string
-	OrderBy           string
-	Sort              string
-	Unsupported       []string
+	TargetBranch      string
+	// IIDs filters by merge request number (project-internal ID). Only
+	// meaningful together with project:/repo: since an IID is unique per project.
+	IIDs []string
+	// Draft is a tri-state: nil = no draft filter, &true = only drafts,
+	// &false = exclude drafts. Set by the draft: qualifier.
+	Draft       *bool
+	OrderBy     string
+	Sort        string
+	Unsupported []string
 }
 
 var qualifierRegex = regexp.MustCompile(`(-?[a-z-]+):(\S+)`)
@@ -48,8 +58,25 @@ func TranslateSearchQuery(query, currentUsername string) TranslatedQuery {
 			t.ReviewerUsername = resolveMe(val)
 		case "label":
 			t.Labels = append(t.Labels, val)
-		case "head":
+		case "head", "source":
 			t.SourceBranch = val
+		case "base", "target":
+			t.TargetBranch = val
+		case "iid", "number":
+			for _, part := range strings.Split(val, ",") {
+				if part != "" {
+					t.IIDs = append(t.IIDs, part)
+				}
+			}
+		case "draft", "wip":
+			switch val {
+			case "true", "yes", "1":
+				b := true
+				t.Draft = &b
+			case "false", "no", "0":
+				b := false
+				t.Draft = &b
+			}
 		case "project", "repo":
 			t.ProjectPath = val
 		case "involves":

@@ -78,6 +78,7 @@ type PullRequestData struct {
 	Url               string
 	State             string
 	Mergeable         string
+	HasConflicts      bool
 	ReviewDecision    string
 	Additions         int
 	Deletions         int
@@ -838,6 +839,17 @@ func optionalGraphQLStringList[T ~string](values []string) *[]T {
 	return &list
 }
 
+// optionalGraphQLBool turns a tri-state *bool into a nullable GraphQL Boolean
+// variable: nil stays a typed nil pointer so shurcooL declares the variable and
+// sends null (GitLab treats a null draft filter as "no filter").
+func optionalGraphQLBool(b *bool) *graphql.Boolean {
+	if b == nil {
+		return nil
+	}
+	v := graphql.Boolean(*b)
+	return &v
+}
+
 type IssuableState string
 
 type MergeRequestState string
@@ -924,9 +936,15 @@ type mergeRequestNode struct {
 	SourceBranch        string
 	TargetBranch        string
 	DetailedMergeStatus string
-	Approved            bool
-	UserNotesCount      int
-	DiffStatsSummary    struct {
+	// Conflicts is GitLab's dedicated "the source branch cannot be merged
+	// automatically" flag. It is more reliable than DetailedMergeStatus for
+	// detecting conflicts: detailedMergeStatus reports only the highest-priority
+	// blocker, so a conflicting draft comes back as DRAFT_STATUS, hiding the
+	// conflict — conflicts stays true regardless.
+	Conflicts        bool
+	Approved         bool
+	UserNotesCount   int
+	DiffStatsSummary struct {
 		Additions int
 		Deletions int
 	}
@@ -987,6 +1005,7 @@ func (n mergeRequestNode) toPullRequestData(projectPath string) PullRequestData 
 		Additions:        n.DiffStatsSummary.Additions,
 		Deletions:        n.DiffStatsSummary.Deletions,
 		Mergeable:        mergeableFromDetailedStatus(n.DetailedMergeStatus),
+		HasConflicts:     n.Conflicts,
 		ReviewDecision:   reviewDecisionFromApproved(n.Approved),
 		MergeStateStatus: mergeStateStatusFromDetailedStatus(n.DetailedMergeStatus),
 		IsInMergeQueue:   false,
@@ -1059,6 +1078,7 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 	var respPageInfo PageInfo
 
 	labels := optionalGraphQLStringList[graphql.String](translated.Labels)
+	draft := optionalGraphQLBool(translated.Draft)
 
 	if translated.ProjectPath != "" {
 		var sourceBranch []string
@@ -1067,13 +1087,24 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 		}
 		sourceBranches := optionalGraphQLStringList[graphql.String](sourceBranch)
 
+		var targetBranch []string
+		if translated.TargetBranch != "" {
+			targetBranch = []string{translated.TargetBranch}
+		}
+		targetBranches := optionalGraphQLStringList[graphql.String](targetBranch)
+
+		// IIDs (merge request numbers) are project-scoped, so they are only
+		// applied on this project-scoped query, never on the cross-project
+		// currentUser.* queries where an IID would be ambiguous.
+		iids := optionalGraphQLStringList[graphql.String](translated.IIDs)
+
 		var queryResult struct {
 			Project struct {
 				MergeRequests struct {
 					Nodes    []mergeRequestNode
 					Count    int
 					PageInfo PageInfo
-				} `graphql:"mergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, authorUsername: $authorUsername, assigneeUsername: $assigneeUsername, reviewerUsername: $reviewerUsername, labels: $labels, sourceBranches: $sourceBranches)"`
+				} `graphql:"mergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, authorUsername: $authorUsername, assigneeUsername: $assigneeUsername, reviewerUsername: $reviewerUsername, labels: $labels, sourceBranches: $sourceBranches, targetBranches: $targetBranches, iids: $iids, draft: $draft)"`
 			} `graphql:"project(fullPath: $fullPath)"`
 		}
 		variables := map[string]any{
@@ -1086,6 +1117,9 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 			"reviewerUsername": optionalGraphQLValue[graphql.String](translated.ReviewerUsername),
 			"labels":           labels,
 			"sourceBranches":   sourceBranches,
+			"targetBranches":   targetBranches,
+			"iids":             iids,
+			"draft":            draft,
 		}
 		err = c.QueryNamed(context.Background(), "ProjectMergeRequests", &queryResult, variables)
 		if err != nil {
@@ -1130,7 +1164,7 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 						Nodes    []mergeRequestNode
 						Count    int
 						PageInfo PageInfo
-					} `graphql:"reviewRequestedMergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, labels: $labels, authorUsername: $authorUsername, assigneeUsername: $assigneeUsername)"`
+					} `graphql:"reviewRequestedMergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, labels: $labels, authorUsername: $authorUsername, assigneeUsername: $assigneeUsername, draft: $draft)"`
 				}
 			}
 			variables := map[string]any{
@@ -1140,6 +1174,7 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 				"labels":           labels,
 				"authorUsername":   optionalGraphQLValue[graphql.String](authorUsername),
 				"assigneeUsername": optionalGraphQLValue[graphql.String](assigneeUsername),
+				"draft":            draft,
 			}
 			err = c.QueryNamed(
 				context.Background(),
@@ -1160,7 +1195,7 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 						Nodes    []mergeRequestNode
 						Count    int
 						PageInfo PageInfo
-					} `graphql:"assignedMergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, labels: $labels)"`
+					} `graphql:"assignedMergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, labels: $labels, draft: $draft)"`
 				}
 			}
 			variables := map[string]any{
@@ -1168,6 +1203,7 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 				"endCursor": (*graphql.String)(endCursor),
 				"state":     state,
 				"labels":    labels,
+				"draft":     draft,
 			}
 			err = c.QueryNamed(
 				context.Background(),
@@ -1188,7 +1224,7 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 						Nodes    []mergeRequestNode
 						Count    int
 						PageInfo PageInfo
-					} `graphql:"authoredMergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, labels: $labels, assigneeUsername: $assigneeUsername)"`
+					} `graphql:"authoredMergeRequests(first: $limit, after: $endCursor, sort: UPDATED_DESC, state: $state, labels: $labels, assigneeUsername: $assigneeUsername, draft: $draft)"`
 				}
 			}
 			variables := map[string]any{
@@ -1197,6 +1233,7 @@ func FetchPullRequests(query string, limit int, pageInfo *PageInfo) (PullRequest
 				"state":            state,
 				"labels":           labels,
 				"assigneeUsername": optionalGraphQLValue[graphql.String](assigneeUsername),
+				"draft":            draft,
 			}
 			err = c.QueryNamed(context.Background(), "MyMergeRequests", &queryResult, variables)
 			if err != nil {

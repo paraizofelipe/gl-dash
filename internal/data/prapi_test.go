@@ -572,6 +572,54 @@ func TestFetchPullRequests_MergeableAndMergeStateStatusMapping(t *testing.T) {
 	}
 }
 
+func TestFetchPullRequests_MapsConflictsFlag(t *testing.T) {
+	tests := []struct {
+		name                string
+		conflicts           bool
+		detailedMergeStatus string
+		wantHasConflicts    bool
+	}{
+		{
+			name:                "conflicting draft reports conflicts despite draft merge status",
+			conflicts:           true,
+			detailedMergeStatus: "DRAFT_STATUS",
+			wantHasConflicts:    true,
+		},
+		{
+			name:                "mergeable branch has no conflicts",
+			conflicts:           false,
+			detailedMergeStatus: "MERGEABLE",
+			wantHasConflicts:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer SetClient(nil)
+
+			responseBody := fmt.Sprintf(`{"data":{"project":{"mergeRequests":{"nodes":[{
+				"iid":"1","title":"T","state":"opened","draft":false,
+				"author":{"username":"jdoe"},
+				"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",
+				"webUrl":"https://gitlab.com/group/proj/-/merge_requests/1",
+				"sourceBranch":"x","targetBranch":"main",
+				"detailedMergeStatus":"%s","conflicts":%t,"approved":false,
+				"diffStatsSummary":{"additions":0,"deletions":0},
+				"labels":{"nodes":[]}
+			}],"count":1,"pageInfo":{"hasNextPage":false,"startCursor":"","endCursor":""}}}}}`, tt.detailedMergeStatus, tt.conflicts)
+
+			mockClient := newMockGraphQLClient(t, staticJSONHandler(http.StatusOK, responseBody))
+			SetClient(mockClient)
+
+			resp, err := FetchPullRequests("project:group/proj", 30, nil)
+			require.NoError(t, err)
+			require.Len(t, resp.Prs, 1)
+
+			assert.Equal(t, tt.wantHasConflicts, resp.Prs[0].HasConflicts)
+		})
+	}
+}
+
 func TestFetchPullRequests_TranslatesAuthorMeAndLabelsIntoRequestVariables(t *testing.T) {
 	defer SetClient(nil)
 	defer gitlab.SetClients(nil, nil)
