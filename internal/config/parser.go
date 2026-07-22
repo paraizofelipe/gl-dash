@@ -165,6 +165,7 @@ type PrsLayoutConfig struct {
 	Ci           ColumnConfig `yaml:"ci,omitempty"`
 	Lines        ColumnConfig `yaml:"lines,omitempty"`
 	NumComments  ColumnConfig `yaml:"numComments,omitempty"`
+	Conflicts    ColumnConfig `yaml:"conflicts,omitempty"`
 }
 
 type IssuesLayoutConfig struct {

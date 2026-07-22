@@ -43,6 +43,22 @@ func (pr *PullRequest) renderNumComments() string {
 	)
 }
 
+// renderConflicts shows a red marker when the merge request's source branch
+// cannot be merged automatically (GitLab's conflicts flag). The cell is blank
+// otherwise, so a full column only draws attention to MRs that need manual
+// conflict resolution.
+func (pr *PullRequest) renderConflicts() string {
+	if pr.Data.Primary == nil {
+		return "-"
+	}
+	if !pr.Data.Primary.HasConflicts {
+		return ""
+	}
+	return pr.getTextStyle().
+		Foreground(pr.Ctx.Theme.ErrorText).
+		Render(constants.FailureIcon)
+}
+
 func (pr *PullRequest) renderReviewStatus() string {
 	if pr.Data.Primary == nil {
 		return "-"
@@ -402,6 +418,7 @@ func (pr *PullRequest) ToTableRow(isSelected bool) table.Row {
 			pr.renderAssignees(),
 			pr.renderBaseName(),
 			pr.renderNumComments(),
+			pr.renderConflicts(),
 			pr.renderReviewStatus(),
 			pr.renderCiStatus(),
 			pr.RenderLines(isSelected),
@@ -419,6 +436,7 @@ func (pr *PullRequest) ToTableRow(isSelected bool) table.Row {
 		pr.renderAssignees(),
 		pr.renderBaseName(),
 		pr.renderNumComments(),
+		pr.renderConflicts(),
 		pr.renderReviewStatus(),
 		pr.renderCiStatus(),
 		pr.RenderLines(isSelected),
